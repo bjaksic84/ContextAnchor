@@ -1,7 +1,7 @@
 # ContextAnchor — Technical Documentation
 
-> **Last updated:** Phase 3 — Enterprise Features  
-> **Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Phase 3 Complete ✅ | Phase 4 Planned
+> **Last updated:** Phase 5 — React Frontend  
+> **Status:** Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5 ✅
 
 ---
 
@@ -12,12 +12,14 @@
 3. [Core Pipeline: How RAG Works](#core-pipeline-how-rag-works)
 4. [Authentication & Multi-tenancy](#authentication--multi-tenancy)
 5. [Enterprise Features (Phase 3)](#enterprise-features-phase-3)
-6. [Layer-by-Layer Breakdown](#layer-by-layer-breakdown)
-7. [Database Schema](#database-schema)
-8. [API Reference](#api-reference)
-9. [Configuration](#configuration)
-10. [Testing](#testing)
-11. [Phase Checkpoints](#phase-checkpoints)
+6. [Local/Private Mode (Phase 4)](#localprivate-mode-phase-4)
+7. [React Frontend (Phase 5)](#react-frontend-phase-5)
+8. [Layer-by-Layer Breakdown](#layer-by-layer-breakdown)
+9. [Database Schema](#database-schema)
+10. [API Reference](#api-reference)
+11. [Configuration](#configuration)
+12. [Testing](#testing)
+13. [Phase Checkpoints](#phase-checkpoints)
 
 ---
 
@@ -112,6 +114,7 @@ src/main/java/com/ragengine/
 │   └── AuditService.java                   # Async audit event recording
 │
 ├── config/                                  # Configuration beans
+│   ├── AiProviderConfig.java              # AI provider switching (OpenAI ↔ Ollama)
 │   ├── AsyncConfig.java                    # Thread pool for async doc processing
 │   ├── OpenApiConfig.java                  # Swagger/OpenAPI metadata
 │   ├── RequestLoggingFilter.java           # Correlation IDs + request timing
@@ -447,10 +450,176 @@ Every request receives a unique correlation ID (`X-Request-Id` header):
   "timestamp": "2025-01-15T10:30:00",
   "uptime": "2h 15m 30s",
   "database": "CONNECTED",
+  "ai": { "provider": "openai", "mode": "cloud" },
   "java": "25",
   "springBoot": "3.4.3"
 }
 ```
+
+---
+
+## Local/Private Mode (Phase 4)
+
+Phase 4 adds full **on-premise / air-gapped** operation. All AI inference (chat + embeddings) can run locally via **Ollama** — no data leaves your network.
+
+### How It Works
+
+The `AiProviderConfig` class uses `@ConditionalOnProperty` to wire either OpenAI or Ollama beans at startup:
+
+```
+rag.ai.provider=openai (default)         rag.ai.provider=ollama
+┌─────────────────────┐                  ┌─────────────────────┐
+│  OpenAiApi          │                  │  OllamaApi          │
+│  OpenAiChatModel    │   ── swap ──►    │  OllamaChatModel    │
+│  OpenAiEmbedding    │                  │  OllamaEmbedding    │
+└─────────┬───────────┘                  └─────────┬───────────┘
+          │                                        │
+          ▼ (same abstractions)                    ▼
+   ChatClient.Builder                       ChatClient.Builder
+   VectorStore                              VectorStore
+   EmbeddingModel                           EmbeddingModel
+```
+
+Services (`RagChatService`, `EmbeddingService`) use Spring AI abstractions (`ChatClient.Builder`, `VectorStore`) — they work identically regardless of the underlying provider.
+
+### Switching Modes
+
+**Option 1 — Spring Profile:**
+```bash
+# Start in local mode
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+
+# Or via environment variable
+SPRING_PROFILES_ACTIVE=local ./mvnw spring-boot:run
+```
+
+**Option 2 — Environment variable:**
+```bash
+RAG_AI_PROVIDER=ollama ./mvnw spring-boot:run
+```
+
+**Option 3 — Docker Compose (full local stack):**
+```bash
+# Start Postgres + Ollama + model initialization
+docker compose --profile local up -d
+
+# Ollama auto-pulls llama3.1 + nomic-embed-text on first startup
+# Then start the app with local profile
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+### Supported Ollama Models
+
+| Purpose | Default Model | Dimensions | Alternatives |
+|---------|--------------|------------|-------------|
+| Chat | `llama3.1` (8B) | — | `mistral`, `codellama`, `phi3`, `gemma2` |
+| Embeddings | `nomic-embed-text` | 768 | `mxbai-embed-large` (1024), `all-minilm` (384) |
+
+> **Important:** When changing embedding models, update `spring.ai.vectorstore.pgvector.dimensions` to match.
+
+### Configuration (application-local.yml)
+
+```yaml
+rag:
+  ai:
+    provider: ollama
+
+spring:
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_CHAT_MODEL:llama3.1}
+          temperature: 0.3
+      embedding:
+        options:
+          model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+    vectorstore:
+      pgvector:
+        dimensions: ${PGVECTOR_DIMENSIONS:768}  # matches nomic-embed-text
+```
+
+---
+
+## React Frontend (Phase 5)
+
+Phase 5 adds a full **React single-page application** that covers every backend API endpoint — no more curl commands needed.
+
+### Tech Stack
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| React | 18.3 | UI framework |
+| Vite | 6 | Build tool + dev server with HMR |
+| Tailwind CSS | 3.4 | Utility-first styling |
+| React Router | 6.28 | Client-side routing |
+| lucide-react | 0.460 | Icon library |
+| react-dropzone | 14.3 | Drag & drop file upload |
+| react-markdown | 9 | Render AI responses as Markdown |
+
+### Architecture
+
+```
+┌────────────────────────────────────────────────────┐
+│                  React SPA (:5173)                  │
+│                                                    │
+│  ┌──────────┐  ┌──────────────────────────────┐   │
+│  │ AuthCtx  │  │  Pages                       │   │
+│  │(JWT mgmt)│  │  ├── LoginPage               │   │
+│  └────┬─────┘  │  ├── RegisterPage             │   │
+│       │        │  ├── ChatPage (RAG interface) │   │
+│       ▼        │  ├── DocumentsPage (upload)   │   │
+│  ┌──────────┐  │  ├── ApiKeysPage (CRUD)       │   │
+│  │API Client│  │  ├── AuditLogsPage (logs)     │   │
+│  │(client.js│──│  └── SettingsPage (status)    │   │
+│  │ auto-401 │  └──────────────────────────────┘   │
+│  │ refresh) │                                      │
+│  └────┬─────┘                                      │
+│       │                                            │
+└───────┼────────────────────────────────────────────┘
+        │  Vite proxy (/api → :8080)
+        ▼
+┌────────────────────┐
+│ Spring Boot (:8080)│
+└────────────────────┘
+```
+
+### API Client (`client.js`)
+
+The API client handles all HTTP communication with automatic JWT management:
+
+- **Token storage** — JWT access + refresh tokens in `localStorage`
+- **Auto-refresh** — on any 401 response, automatically calls `/auth/refresh` with the stored refresh token, retries the original request with the new access token
+- **Session expiry** — if refresh also fails, clears storage and redirects to `/login`
+- **Upload progress** — uses `XMLHttpRequest` (not `fetch`) for document uploads to get real progress tracking via `xhr.upload.onprogress`
+
+### Pages
+
+| Page | Route | Covers |
+|------|-------|--------|
+| **Login** | `/login` | JWT login with email/password, split-screen branding |
+| **Register** | `/register` | User + organization registration |
+| **Chat** | `/chat`, `/chat/:id` | ChatGPT-style RAG interface — conversation sidebar, document picker, message bubbles with source citations, typing indicator |
+| **Documents** | `/documents` | Drag & drop upload zone, documents table with real-time status badges (auto-refreshes every 3s while processing), delete with confirmation |
+| **API Keys** | `/api-keys` | Create keys (with optional expiry), list active keys, revoke. Shows raw key once with copy button |
+| **Audit Logs** | `/audit` | Paginated activity log — filter by action type or "My activity" toggle, shows status/user/resource/details/duration |
+| **Settings** | `/settings` | Profile card, organization card, live system status (AI provider, DB, memory, uptime), API reference |
+
+### Layout
+
+- **Collapsible dark sidebar** (`w-64` ↔ `w-16`) with nav links, system status indicator (UP/DOWN + AI provider), user avatar with initials + organization name
+- **Protected routes** — all pages except login/register require authentication (redirects to `/login`)
+- **Responsive** — works on desktop and tablet viewports
+
+### CORS Configuration
+
+Spring Security is configured with a `CorsConfigurationSource` bean:
+- Allowed origins: `http://localhost:5173` (Vite), `http://localhost:3000`, `http://localhost:8080`
+- All HTTP methods, all headers, credentials enabled
+- Max age: 1 hour
+
+In development, Vite's proxy (`/api` → `http://localhost:8080`) handles API calls — CORS is primarily needed if accessing the backend directly from the browser.
 
 ---
 
@@ -644,10 +813,14 @@ api_keys                     -- API key credentials
 | `security.jwt.secret` | env var | JWT signing secret (min 32 chars) |
 | `security.jwt.access-token-expiration` | 900000 (15m) | Access token TTL in ms |
 | `security.jwt.refresh-token-expiration` | 604800000 (7d) | Refresh token TTL in ms |
-| `spring.ai.openai.api-key` | env var | OpenAI API key |
-| `spring.ai.openai.chat.options.model` | gpt-4o-mini | Chat model |
-| `spring.ai.openai.embedding.options.model` | text-embedding-3-small | Embedding model |
-| `spring.ai.vectorstore.pgvector.dimensions` | 1536 | Must match embedding model |
+| `rag.ai.provider` | openai | AI provider: `openai` (cloud) or `ollama` (local) |
+| `spring.ai.openai.api-key` | env var | OpenAI API key (cloud mode) |
+| `spring.ai.openai.chat.options.model` | gpt-4o-mini | OpenAI chat model |
+| `spring.ai.openai.embedding.options.model` | text-embedding-3-small | OpenAI embedding model |
+| `spring.ai.ollama.base-url` | http://localhost:11434 | Ollama server URL (local mode) |
+| `spring.ai.ollama.chat.options.model` | llama3.1 | Ollama chat model |
+| `spring.ai.ollama.embedding.options.model` | nomic-embed-text | Ollama embedding model |
+| `spring.ai.vectorstore.pgvector.dimensions` | 1536 (openai) / 768 (ollama) | Must match embedding model |
 | `rag.chunking.chunk-size` | 800 | Target chunk size (chars) |
 | `rag.chunking.chunk-overlap` | 200 | Overlap between chunks |
 | `rag.chunking.min-chunk-size` | 100 | Minimum chunk size |
@@ -669,7 +842,7 @@ api_keys                     -- API key credentials
 |-----------|--------|
 | **Testcontainers** | Spins up a real PostgreSQL 16 + pgvector instance in Docker for integration tests |
 | **BaseIntegrationTest** | Shared base class — manages the container lifecycle, sets dynamic datasource properties |
-| **TestAiConfig** | `@TestConfiguration` providing stub `VectorStore` and `ChatClient.Builder` (no real AI calls in tests) |
+| **TestAiConfig** | `@TestConfiguration` providing stub `VectorStore`, `ChatModel`, `EmbeddingModel`, and `ChatClient.Builder` (no real AI calls in tests) |
 | **application-test.yml** | Test profile config — disables rate limiting, uses test JWT secret |
 
 ### Test Suite Summary
@@ -682,8 +855,9 @@ api_keys                     -- API key credentials
 | `AuthControllerIntegrationTest` | Integration | 9 | Registration, login, refresh, logout, error cases |
 | `ApiKeyIntegrationTest` | Integration | 7 | API key CRUD, authentication via X-API-Key header |
 | `AuditControllerIntegrationTest` | Integration | 5 | Audit log queries, filtering, pagination |
-| `HealthControllerIntegrationTest` | Integration | 6 | Health endpoint fields, DB connectivity, public access |
-| **Total** | | **48** | |
+| `HealthControllerIntegrationTest` | Integration | 7 | Health endpoint fields, DB connectivity, AI provider info, public access |
+| `AiProviderConfigTest` | Unit | 5 | Conditional bean creation: OpenAI vs Ollama provider switching |
+| **Total** | | **54** | |
 
 ### Running Tests
 
@@ -746,8 +920,31 @@ api_keys                     -- API key credentials
 - [x] Integration tests with Testcontainers (27 integration + 21 unit = 48 total)
 - [x] Database migrations (`V3__audit_and_api_keys.sql`, `V4__drop_audit_fk_constraints.sql`)
 
-### 📋 Phase 4 — Local/Private Mode (PLANNED)
-- [ ] Ollama integration for local LLM inference
-- [ ] Local embedding model support
-- [ ] Profile-based switching (cloud vs local)
-- [ ] Zero external API dependency mode
+### ✅ Phase 4 — Local/Private Mode (COMPLETE)
+- [x] Ollama integration for local LLM inference (`spring-ai-ollama-spring-boot-starter`)
+- [x] Local embedding model support (`nomic-embed-text` via Ollama, configurable)
+- [x] Profile-based switching (`--spring.profiles.active=local` or `rag.ai.provider=ollama`)
+- [x] Zero external API dependency mode (all AI processing on-premise)
+- [x] `AiProviderConfig` — `@ConditionalOnProperty` bean wiring for OpenAI ↔ Ollama
+- [x] `application-local.yml` — pre-configured local profile (Ollama models, pgvector dimensions)
+- [x] Docker Compose Ollama service (`docker compose --profile local up`)
+- [x] Auto-pull of Ollama models on first startup (llama3.1 + nomic-embed-text)
+- [x] Health endpoint shows active AI provider and mode (cloud/local)
+- [x] Unit tests for provider switching (`AiProviderConfigTest` — 5 tests)
+- [x] All existing tests updated and passing (54 total)
+
+### ✅ Phase 5 — React Frontend (COMPLETE)
+- [x] React 18 + Vite 6 SPA with Tailwind CSS
+- [x] JWT authentication flow (login, register, auto-refresh on 401, logout)
+- [x] ChatGPT-style RAG chat interface with conversation history
+- [x] Document picker (select which documents to chat with)
+- [x] Source citations with expandable chunk previews + similarity scores
+- [x] Drag & drop document upload with progress tracking
+- [x] Real-time document status tracking (auto-refresh while processing)
+- [x] API key management (create with optional expiry, copy once, list, revoke)
+- [x] Audit log viewer with action filters and per-user filtering, paginated
+- [x] Settings page with live system status (AI provider, DB, memory, uptime)
+- [x] Collapsible dark sidebar with nav, system status indicator, user avatar
+- [x] Spring Security CORS configuration for frontend origins
+- [x] Vite dev proxy (`/api` → `:8080`)
+- [x] All 18 backend API endpoints covered by the UI

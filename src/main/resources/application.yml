@@ -42,6 +42,7 @@ spring:
         dimensions: 1536
         index-type: hnsw
         distance-type: cosine_distance
+        initialize-schema: true
 
 # Security / JWT configuration
 security:
@@ -52,6 +53,8 @@ security:
 
 # Application-specific configuration
 rag:
+  ai:
+    provider: ${RAG_AI_PROVIDER:openai}   # openai (default) or ollama (local)
   rate-limit:
     enabled: true
     requests-per-minute: 60

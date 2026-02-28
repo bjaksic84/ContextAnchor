@@ -111,11 +111,25 @@ public class RagChatService {
 
         ChatClient chatClient = chatClientBuilder.build();
 
-        String aiResponse = chatClient.prompt()
-                .system(systemPrompt)
-                .messages(messageHistory)
-                .call()
-                .content();
+        String aiResponse;
+        try {
+            aiResponse = chatClient.prompt()
+                    .system(systemPrompt)
+                    .messages(messageHistory)
+                    .call()
+                    .content();
+        } catch (RuntimeException ex) {
+            String msg = ex.getMessage() != null ? ex.getMessage() : "";
+            if (msg.contains("memory") || msg.contains("model")) {
+                log.error("Ollama model error: {}", msg);
+                throw new IllegalStateException(
+                        "AI model could not be loaded — the selected model may require more memory than is available. " +
+                        "Try a smaller model or free system resources.", ex);
+            }
+            log.error("LLM call failed: {}", msg);
+            throw new IllegalStateException(
+                    "Failed to generate AI response. Please try again later.", ex);
+        }
 
         // Step 6: Build source citations
         List<ChatResponse.Source> sources = buildSources(relevantDocs);

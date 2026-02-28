@@ -62,6 +62,15 @@ class HealthControllerIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    @DisplayName("Should include AI provider info")
+    void shouldIncludeAiProviderInfo() throws Exception {
+        mockMvc.perform(get("/api/v1/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ai.provider").isNotEmpty())
+                .andExpect(jsonPath("$.ai.mode").isNotEmpty());
+    }
+
+    @Test
     @DisplayName("Should include Java runtime info")
     void shouldIncludeRuntimeInfo() throws Exception {
         mockMvc.perform(get("/api/v1/health"))

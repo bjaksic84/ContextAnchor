@@ -36,5 +36,61 @@ services:
       postgres:
         condition: service_healthy
 
+  # ============================================
+  # Ollama — Local LLM inference engine
+  # (only needed for local/private mode)
+  # ============================================
+  # Start with: docker compose --profile local up
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag-ollama
+    profiles:
+      - local
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    # Uncomment for GPU support (requires NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ============================================
+  # Ollama Model Initializer
+  # Pulls required models on first startup
+  # ============================================
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: rag-ollama-init
+    profiles:
+      - local
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=ollama
+    entrypoint: >
+      sh -c "
+        echo 'Pulling chat model (llama3.2:3b)...' &&
+        ollama pull llama3.2:3b &&
+        echo 'Pulling embedding model (nomic-embed-text)...' &&
+        ollama pull nomic-embed-text &&
+        echo 'All models ready!'
+      "
+    restart: "no"
+
 volumes:
   postgres_data:
+  ollama_data:

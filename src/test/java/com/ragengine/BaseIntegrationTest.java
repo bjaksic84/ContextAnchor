@@ -31,9 +31,10 @@ public abstract class BaseIntegrationTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
 
-        // Disable Spring AI auto-config that requires OpenAI/pgvector
+        // Disable Spring AI auto-config that requires OpenAI/Ollama/pgvector
         registry.add("spring.autoconfigure.exclude", () -> String.join(",",
                 "org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration",
+                "org.springframework.ai.autoconfigure.ollama.OllamaAutoConfiguration",
                 "org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration"
         ));
     }

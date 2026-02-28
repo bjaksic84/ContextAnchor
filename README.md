@@ -1,6 +1,6 @@
-# Enterprise RAG Platform
+# Enterprise RAG Platform — ContextAnchor
 
-An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with **Spring Boot 3** and **Spring AI**. Upload documents and chat with them using AI — your data stays private.
+An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with **Spring Boot 3**, **Spring AI**, and a **React** frontend. Upload documents and chat with them using AI — runs in the cloud (OpenAI) or fully on-premise (Ollama). Your data stays private.
 
 ## What It Does
 
@@ -19,11 +19,14 @@ An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with
 
 | Component | Technology |
 |-----------|-----------|
-| Framework | Spring Boot 3.4 + Java 21 |
-| AI Integration | Spring AI (OpenAI / Ollama) |
+| Backend | Spring Boot 3.4 + Java 21 |
+| Frontend | React 18 + Vite 6 + Tailwind CSS 3 |
+| AI Integration | Spring AI (OpenAI or Ollama — switchable) |
 | Vector Database | PostgreSQL + pgvector |
-| Text Extraction | Apache Tika || Authentication | Spring Security + JWT (JJWT) |
-| Multi-tenancy | Row-level tenant isolation || DB Migrations | Flyway |
+| Text Extraction | Apache Tika |
+| Authentication | Spring Security + JWT (JJWT) |
+| Multi-tenancy | Row-level tenant isolation |
+| DB Migrations | Flyway |
 | API Docs | OpenAPI 3 / Swagger UI |
 | Async Processing | Spring @Async with thread pool |
 | Containerization | Docker Compose |
@@ -32,12 +35,12 @@ An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with
 
 ```
 ┌──────────────┐     ┌──────────────────────────────────────────────┐
-│   Client     │     │           Spring Boot Application            │
-│  (Swagger/   │────▶│                                              │
-│   Postman)   │     │  ┌────────────┐  ┌────────────────────────┐ │
-│              │◀────│  │ REST API   │  │  Document Pipeline     │ │
-└──────────────┘     │  │ Controllers│  │                        │ │
-                     │  └─────┬──────┘  │  Upload → Extract →    │ │
+│   React SPA  │     │           Spring Boot Application            │
+│  (Vite :5173)│────▶│                                              │
+│              │     │  ┌────────────┐  ┌────────────────────────┐ │
+│  or Swagger/ │◀────│  │ REST API   │  │  Document Pipeline     │ │
+│   curl/API   │     │  │ Controllers│  │                        │ │
+└──────────────┘     │  └─────┬──────┘  │  Upload → Extract →    │ │
                      │        │         │  Chunk  → Embed        │ │
                      │        ▼         └───────────┬────────────┘ │
                      │  ┌─────────────┐             │              │
@@ -48,7 +51,8 @@ An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with
                      │     ▼      ▼                                │
                      │  ┌──────┐ ┌──────────┐                     │
                      │  │OpenAI│ │ pgvector │                     │
-                     │  │ LLM  │ │ (search) │                     │
+                     │  │  or  │ │ (search) │                     │
+                     │  │Ollama│ │          │                     │
                      │  └──────┘ └──────────┘                     │
                      └──────────────────────────────────────────────┘
 ```
@@ -58,39 +62,86 @@ An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with
 ### Prerequisites
 
 - **Java 21+**
+- **Node.js 18+** (for the frontend)
 - **Docker & Docker Compose**
-- **OpenAI API key** (or a locally running Ollama instance)
+- **OpenAI API key** (for cloud mode) or **Ollama** installed locally (for private mode)
 
-### 1. Clone and set up
+### Quick Start (Local/Private Mode — no API key needed)
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/bojanjaksic/enterprise-rag-platform.git
 cd enterprise-rag-platform
+
+# 2. Start the infrastructure (Postgres + pgvector + Ollama)
+docker compose --profile local up -d
+
+# 3. Start the backend (waits for Ollama models to download on first run)
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+
+# 4. Start the frontend (in a new terminal)
+cd frontend
+npm install
+npx vite --host
 ```
 
-### 2. Start the database
+Open **http://localhost:5173** — you're ready to go.
+
+### Quick Start (Cloud Mode — OpenAI)
 
 ```bash
+# 1. Start the database
 docker compose up -d
-```
 
-This starts PostgreSQL with pgvector and pgAdmin (accessible at `http://localhost:5050`).
-
-### 3. Set your OpenAI API key
-
-```bash
+# 2. Set your OpenAI API key
 export OPENAI_API_KEY=sk-your-key-here
+
+# 3. Start the backend
+./mvnw spring-boot:run
+
+# 4. Start the frontend
+cd frontend && npm install && npx vite --host
 ```
 
-### 4. Run the application
+### Using the UI
+
+1. **Register** — open http://localhost:5173, click "Create account", enter your name, email, password, and organization name
+2. **Upload Documents** — go to the **Documents** page, drag & drop PDF/DOCX/TXT files into the upload zone. Watch the status change from UPLOADED → PROCESSING → CHUNKING → EMBEDDING → READY
+3. **Chat** — go to the **Chat** page, select documents to chat with, type your question. The AI will answer based on your documents with source citations
+4. **API Keys** — go to **API Keys** to create keys for programmatic access (REST API). The raw key is shown once — copy and save it
+5. **Audit Logs** — go to **Audit Logs** to see all activity in your organization (logins, uploads, chats, etc.)
+6. **Settings** — view your profile, organization info, and live system status (AI provider, database, memory)
+
+### Using the REST API directly
+
+You can also use the API without the UI (e.g., from scripts, curl, or Postman):
 
 ```bash
-./mvnw spring-boot:run
+# Register
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"fullName":"Alice","email":"alice@example.com","password":"pass1234","organizationName":"My Corp"}'
+
+# Login (save the accessToken)
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"pass1234"}' | jq -r .accessToken)
+
+# Upload a document
+DOC_ID=$(curl -s -X POST http://localhost:8080/api/v1/documents \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@my-document.pdf" | jq -r .id)
+
+# Wait for processing, then chat
+curl -X POST http://localhost:8080/api/v1/chat \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"Summarize the key points\",\"documentIds\":[\"$DOC_ID\"]}"
 ```
 
-### 5. Open Swagger UI
+### Swagger UI
 
-Navigate to **http://localhost:8080/swagger-ui.html** to explore the API.
+Navigate to **http://localhost:8080/swagger-ui.html** for the interactive API documentation.
 
 ## API Endpoints
 
@@ -176,77 +227,49 @@ Navigate to **http://localhost:8080/swagger-ui.html** to explore the API.
 ## Project Structure
 
 ```
-src/main/java/com/ragengine/
-├── EnterpriseRagPlatformApplication.java    # Main entry point
-├── audit/
-│   ├── AuditAction.java                    # Audit event type constants
-│   ├── AuditLog.java                       # Audit record entity
-│   ├── AuditLogRepository.java             # Tenant-scoped audit queries
-│   └── AuditService.java                   # Async audit event recording
-├── config/
-│   ├── AsyncConfig.java                    # Thread pool for async processing
-│   ├── OpenApiConfig.java                  # Swagger/OpenAPI configuration
-│   ├── RequestLoggingFilter.java           # Correlation IDs + request timing
-│   └── SecurityConfig.java                 # Spring Security filter chain
-├── controller/
-│   ├── ApiKeyController.java               # API key CRUD endpoints
-│   ├── AuditController.java                # Audit log query endpoint
-│   ├── AuthController.java                 # Auth REST endpoints
-│   ├── ChatController.java                 # Chat REST endpoints
-│   ├── DocumentController.java             # Document REST endpoints
-│   └── HealthController.java               # Health check (DB, uptime, runtime)
-├── domain/
-│   ├── dto/                                 # Request/response DTOs
-│   └── entity/                              # JPA entities
-│       ├── ApiKey.java                      # API key (SHA-256 hashed)
-│       ├── ChatMessage.java
-│       ├── Conversation.java
-│       ├── Document.java
-│       ├── DocumentChunk.java
-│       ├── DocumentStatus.java
-│       ├── RefreshToken.java
-│       ├── Tenant.java
-│       ├── User.java
-│       └── UserRole.java
-├── exception/
-│   ├── DocumentNotFoundException.java
-│   ├── DocumentProcessingException.java
-│   └── GlobalExceptionHandler.java          # Centralized error handling
-├── ratelimit/
-│   ├── RateLimitConfig.java                # Rate limit configuration
-│   ├── RateLimitExceededException.java     # Custom 429 exception
-│   ├── RateLimitFilter.java                # Per-tenant rate limiting filter
-│   └── RateLimitService.java               # Bucket4j token bucket management
-├── repository/
-│   ├── ApiKeyRepository.java               # API key lookup by hash
-│   ├── ChatMessageRepository.java
-│   ├── ConversationRepository.java
-│   ├── DocumentChunkRepository.java
-│   ├── DocumentRepository.java
-│   ├── RefreshTokenRepository.java
-│   ├── TenantRepository.java
-│   └── UserRepository.java
-├── security/
-│   ├── JwtAuthenticationFilter.java         # Dual auth: JWT + API Key
-│   ├── JwtService.java                      # JWT generation & validation
-│   └── SecurityContext.java                 # Current user/tenant utility
-└── service/
-    ├── ApiKeyService.java                   # API key creation & validation
-    ├── AuthService.java                     # Registration, login, tokens
-    ├── ChunkingService.java                 # Sentence-aware text chunking
-    ├── CustomUserDetailsService.java        # Spring Security user loader
-    ├── DocumentExtractionService.java       # PDF/DOCX text extraction (Tika)
-    ├── DocumentService.java                 # Document lifecycle orchestrator
-    ├── EmbeddingService.java                # Vector embedding generation
-    └── RagChatService.java                  # Core RAG pipeline
+├── frontend/                                # React SPA (Vite + Tailwind CSS)
+│   ├── src/
+│   │   ├── api/client.js                   # API client with JWT auto-refresh
+│   │   ├── context/AuthContext.jsx         # Auth state management
+│   │   ├── components/
+│   │   │   ├── Layout.jsx                  # Sidebar navigation + system status
+│   │   │   ├── ChatMessage.jsx             # Message bubble with source citations
+│   │   │   └── ProtectedRoute.jsx          # Auth guard
+│   │   └── pages/
+│   │       ├── LoginPage.jsx               # Split-screen login
+│   │       ├── RegisterPage.jsx            # Registration with org setup
+│   │       ├── ChatPage.jsx                # ChatGPT-style RAG interface
+│   │       ├── DocumentsPage.jsx           # Drag & drop upload + status tracking
+│   │       ├── ApiKeysPage.jsx             # API key management
+│   │       ├── AuditLogsPage.jsx           # Activity log with filters
+│   │       └── SettingsPage.jsx            # Profile, org, system status
+│   ├── package.json
+│   └── vite.config.js                      # API proxy to :8080
+│
+├── src/main/java/com/ragengine/           # Spring Boot backend
+│   ├── EnterpriseRagPlatformApplication.java
+│   ├── audit/                              # Async audit logging
+│   ├── config/                             # Security, AI provider, CORS
+│   ├── controller/                         # REST endpoints
+│   ├── domain/                             # DTOs + JPA entities
+│   ├── exception/                          # Global error handling
+│   ├── ratelimit/                          # Per-tenant rate limiting
+│   ├── repository/                         # Data access
+│   ├── security/                           # JWT + API Key auth
+│   └── service/                            # Business logic + RAG pipeline
+│
+├── docker-compose.yml                      # PostgreSQL + pgvector + Ollama
+├── pom.xml                                 # Maven (Spring Boot 3.4)
+└── TECHNICAL.md                            # Detailed technical documentation
 ```
 
 ## Roadmap
 
-- [x] **Phase 1** — Core RAG Pipeline ✅
+- [x] **Phase 1** — Core RAG Pipeline (Tika, chunking, embeddings, chat with citations) ✅
 - [x] **Phase 2** — Authentication (Spring Security + JWT), multi-tenancy ✅
 - [x] **Phase 3** — Rate limiting, audit logging, API keys, observability, 48 tests ✅
-- [ ] **Phase 4** — Ollama support for fully local/private deployment
+- [x] **Phase 4** — Ollama integration, local/private mode, profile-based switching, 54 tests ✅
+- [x] **Phase 5** — React UI (Vite + Tailwind), full platform coverage ✅
 
 ## License
 

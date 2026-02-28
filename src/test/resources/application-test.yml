@@ -33,6 +33,8 @@ security:
     refresh-token-expiration: 604800000
 
 rag:
+  ai:
+    provider: openai    # tests use stub beans regardless of provider
   rate-limit:
     enabled: false
   chunking:

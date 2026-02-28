@@ -4,7 +4,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
 
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+        org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration.class,
+        org.springframework.ai.autoconfigure.ollama.OllamaAutoConfiguration.class
+})
 @EnableAsync
 public class EnterpriseRagPlatformApplication {
 

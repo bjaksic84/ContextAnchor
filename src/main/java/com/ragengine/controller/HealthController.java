@@ -3,6 +3,7 @@ package com.ragengine.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,6 +29,9 @@ public class HealthController {
 
     private final DataSource dataSource;
     private final Optional<BuildProperties> buildProperties;
+
+    @Value("${rag.ai.provider:openai}")
+    private String aiProvider;
 
     private static final LocalDateTime START_TIME = LocalDateTime.now();
 
@@ -62,6 +66,12 @@ public class HealthController {
             response.put("status", "DEGRADED");
         }
         response.put("database", db);
+
+        // AI provider info
+        Map<String, String> ai = new LinkedHashMap<>();
+        ai.put("provider", aiProvider);
+        ai.put("mode", "ollama".equalsIgnoreCase(aiProvider) ? "local/private" : "cloud");
+        response.put("ai", ai);
 
         // Java runtime
         Map<String, String> runtime = new LinkedHashMap<>();
