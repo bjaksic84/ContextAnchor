@@ -42,7 +42,8 @@ public class EmbeddingService {
                                 "documentId", document.getId().toString(),
                                 "documentName", document.getOriginalName(),
                                 "chunkIndex", chunk.getChunkIndex(),
-                                "pageNumber", chunk.getPageNumber() != null ? chunk.getPageNumber() : -1
+                                "pageNumber", chunk.getPageNumber() != null ? chunk.getPageNumber() : -1,
+                                "tenantId", document.getTenant() != null ? document.getTenant().getId().toString() : ""
                         )
                 ))
                 .toList();

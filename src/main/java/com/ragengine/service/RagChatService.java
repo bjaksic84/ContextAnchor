@@ -11,6 +11,7 @@ import com.ragengine.exception.DocumentNotFoundException;
 import com.ragengine.repository.ChatMessageRepository;
 import com.ragengine.repository.ConversationRepository;
 import com.ragengine.repository.DocumentRepository;
+import com.ragengine.security.SecurityContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -51,6 +52,7 @@ public class RagChatService {
     private final ConversationRepository conversationRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final DocumentRepository documentRepository;
+    private final SecurityContext securityContext;
 
     @Value("${rag.chat.top-k-results:5}")
     private int topKResults;
@@ -126,31 +128,36 @@ public class RagChatService {
     }
 
     /**
-     * Gets all conversations.
+     * Gets all conversations for the current tenant.
      */
     @Transactional(readOnly = true)
     public List<ConversationResponse> getAllConversations() {
-        return conversationRepository.findAllByOrderByUpdatedAtDesc().stream()
+        UUID tenantId = securityContext.getCurrentTenantId();
+        return conversationRepository.findByTenantIdOrderByUpdatedAtDesc(tenantId).stream()
                 .map(this::mapConversation)
                 .toList();
     }
 
     /**
-     * Gets a conversation by ID with all messages.
+     * Gets a conversation by ID, scoped to the current tenant.
      */
     @Transactional(readOnly = true)
     public ConversationResponse getConversation(UUID id) {
-        Conversation conversation = conversationRepository.findById(id)
+        UUID tenantId = securityContext.getCurrentTenantId();
+        Conversation conversation = conversationRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + id));
         return mapConversation(conversation);
     }
 
     /**
-     * Deletes a conversation.
+     * Deletes a conversation, scoped to the current tenant.
      */
     @Transactional
     public void deleteConversation(UUID id) {
-        conversationRepository.deleteById(id);
+        UUID tenantId = securityContext.getCurrentTenantId();
+        Conversation conversation = conversationRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + id));
+        conversationRepository.delete(conversation);
         log.info("Conversation deleted: {}", id);
     }
 
@@ -160,15 +167,18 @@ public class RagChatService {
 
     /**
      * Retrieves relevant document chunks from the vector store using similarity search,
-     * filtered to only include chunks from the specified documents.
+     * filtered to only include chunks from the specified documents and the current tenant.
      */
     private List<org.springframework.ai.document.Document> retrieveRelevantChunks(
             String query, List<UUID> documentIds) {
 
-        // Build filter to restrict search to specified documents
-        String filterExpression = documentIds.stream()
+        UUID tenantId = securityContext.getCurrentTenantId();
+
+        // Build filter to restrict search to specified documents within the tenant
+        String docFilter = documentIds.stream()
                 .map(id -> "documentId == '" + id.toString() + "'")
                 .collect(Collectors.joining(" || "));
+        String filterExpression = "tenantId == '" + tenantId.toString() + "' && (" + docFilter + ")";
 
         SearchRequest searchRequest = SearchRequest.builder()
                 .query(query)
@@ -267,10 +277,11 @@ public class RagChatService {
     // ============================
 
     private void validateDocuments(List<UUID> documentIds) {
-        List<Document> documents = documentRepository.findByIdIn(documentIds);
+        UUID tenantId = securityContext.getCurrentTenantId();
+        List<Document> documents = documentRepository.findByIdInAndTenantId(documentIds, tenantId);
 
         if (documents.size() != documentIds.size()) {
-            throw new DocumentNotFoundException("One or more documents not found");
+            throw new DocumentNotFoundException("One or more documents not found in your organization");
         }
 
         List<Document> notReady = documents.stream()
@@ -286,15 +297,20 @@ public class RagChatService {
     }
 
     private Conversation getOrCreateConversation(ChatRequest request) {
+        UUID tenantId = securityContext.getCurrentTenantId();
         if (request.conversationId() != null) {
-            return conversationRepository.findById(request.conversationId())
+            return conversationRepository.findByIdAndTenantId(request.conversationId(), tenantId)
                     .orElseGet(this::createNewConversation);
         }
         return createNewConversation();
     }
 
     private Conversation createNewConversation() {
-        return conversationRepository.save(Conversation.builder().build());
+        return conversationRepository.save(
+                Conversation.builder()
+                        .tenant(securityContext.getCurrentUser().getTenant())
+                        .createdBy(securityContext.getCurrentUser())
+                        .build());
     }
 
     private void saveMessage(Conversation conversation, String role, String content,

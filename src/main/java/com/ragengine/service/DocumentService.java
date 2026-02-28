@@ -4,10 +4,13 @@ import com.ragengine.domain.dto.DocumentResponse;
 import com.ragengine.domain.entity.Document;
 import com.ragengine.domain.entity.DocumentChunk;
 import com.ragengine.domain.entity.DocumentStatus;
+import com.ragengine.domain.entity.Tenant;
+import com.ragengine.domain.entity.User;
 import com.ragengine.exception.DocumentNotFoundException;
 import com.ragengine.exception.DocumentProcessingException;
 import com.ragengine.repository.DocumentChunkRepository;
 import com.ragengine.repository.DocumentRepository;
+import com.ragengine.security.SecurityContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,6 +40,7 @@ public class DocumentService {
     private final DocumentExtractionService extractionService;
     private final ChunkingService chunkingService;
     private final EmbeddingService embeddingService;
+    private final SecurityContext securityContext;
 
     @Value("${rag.upload.storage-path:./uploads}")
     private String storagePath;
@@ -54,6 +58,9 @@ public class DocumentService {
     public DocumentResponse uploadDocument(MultipartFile file) {
         validateFile(file);
 
+        User currentUser = securityContext.getCurrentUser();
+        Tenant tenant = currentUser.getTenant();
+
         // Generate unique filename
         String filename = UUID.randomUUID() + "_" + file.getOriginalFilename();
 
@@ -67,6 +74,8 @@ public class DocumentService {
                 .contentType(file.getContentType())
                 .fileSize(file.getSize())
                 .status(DocumentStatus.UPLOADED)
+                .tenant(tenant)
+                .uploadedBy(currentUser)
                 .build();
 
         document = documentRepository.save(document);
@@ -123,31 +132,35 @@ public class DocumentService {
     }
 
     /**
-     * Gets all documents ordered by creation date.
+     * Gets all documents for the current tenant, ordered by creation date.
      */
     @Transactional(readOnly = true)
     public List<DocumentResponse> getAllDocuments() {
-        return documentRepository.findAllByOrderByCreatedAtDesc().stream()
+        UUID tenantId = securityContext.getCurrentTenantId();
+        return documentRepository.findByTenantIdOrderByCreatedAtDesc(tenantId).stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
     /**
-     * Gets a document by ID.
+     * Gets a document by ID, scoped to the current tenant.
      */
     @Transactional(readOnly = true)
     public DocumentResponse getDocument(UUID id) {
-        Document document = documentRepository.findById(id)
+        UUID tenantId = securityContext.getCurrentTenantId();
+        Document document = documentRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new DocumentNotFoundException(id));
         return mapToResponse(document);
     }
 
     /**
      * Deletes a document and its associated chunks and embeddings.
+     * Scoped to the current tenant.
      */
     @Transactional
     public void deleteDocument(UUID id) {
-        Document document = documentRepository.findById(id)
+        UUID tenantId = securityContext.getCurrentTenantId();
+        Document document = documentRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new DocumentNotFoundException(id));
 
         // Remove embeddings from vector store

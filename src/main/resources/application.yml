@@ -43,6 +43,13 @@ spring:
         index-type: hnsw
         distance-type: cosine_distance
 
+# Security / JWT configuration
+security:
+  jwt:
+    secret: ${JWT_SECRET:your-256-bit-secret-key-change-in-production-minimum-32-chars}
+    access-token-expiration: 900000    # 15 minutes in milliseconds
+    refresh-token-expiration: 604800000 # 7 days in milliseconds
+
 # Application-specific configuration
 rag:
   chunking:

@@ -22,8 +22,8 @@ An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with
 | Framework | Spring Boot 3.4 + Java 21 |
 | AI Integration | Spring AI (OpenAI / Ollama) |
 | Vector Database | PostgreSQL + pgvector |
-| Text Extraction | Apache Tika |
-| DB Migrations | Flyway |
+| Text Extraction | Apache Tika || Authentication | Spring Security + JWT (JJWT) |
+| Multi-tenancy | Row-level tenant isolation || DB Migrations | Flyway |
 | API Docs | OpenAPI 3 / Swagger UI |
 | Async Processing | Spring @Async with thread pool |
 | Containerization | Docker Compose |
@@ -94,7 +94,16 @@ Navigate to **http://localhost:8080/swagger-ui.html** to explore the API.
 
 ## API Endpoints
 
-### Documents
+### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/auth/register` | Register new user + organization |
+| `POST` | `/api/v1/auth/login` | Login (returns JWT tokens) |
+| `POST` | `/api/v1/auth/refresh` | Refresh access token |
+| `POST` | `/api/v1/auth/logout` | Invalidate refresh token |
+
+### Documents (requires Bearer token)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -103,7 +112,7 @@ Navigate to **http://localhost:8080/swagger-ui.html** to explore the API.
 | `GET`  | `/api/v1/documents/{id}` | Get document details |
 | `DELETE` | `/api/v1/documents/{id}` | Delete document + embeddings |
 
-### Chat
+### Chat (requires Bearer token)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -149,34 +158,53 @@ src/main/java/com/ragengine/
 ├── EnterpriseRagPlatformApplication.java    # Main entry point
 ├── config/
 │   ├── AsyncConfig.java                     # Thread pool for async processing
-│   └── OpenApiConfig.java                   # Swagger/OpenAPI configuration
+│   ├── OpenApiConfig.java                   # Swagger/OpenAPI configuration
+│   └── SecurityConfig.java                  # Spring Security filter chain
 ├── controller/
+│   ├── AuthController.java                  # Auth REST endpoints
 │   ├── ChatController.java                  # Chat REST endpoints
 │   ├── DocumentController.java              # Document REST endpoints
 │   └── HealthController.java                # Health check endpoint
 ├── domain/
 │   ├── dto/                                 # Request/response DTOs
+│   │   ├── AuthResponse.java
 │   │   ├── ChatRequest.java
 │   │   ├── ChatResponse.java
 │   │   ├── ConversationResponse.java
-│   │   └── DocumentResponse.java
+│   │   ├── DocumentResponse.java
+│   │   ├── LoginRequest.java
+│   │   ├── RefreshTokenRequest.java
+│   │   └── RegisterRequest.java
 │   └── entity/                              # JPA entities
 │       ├── ChatMessage.java
 │       ├── Conversation.java
 │       ├── Document.java
 │       ├── DocumentChunk.java
-│       └── DocumentStatus.java
+│       ├── DocumentStatus.java
+│       ├── RefreshToken.java
+│       ├── Tenant.java
+│       ├── User.java
+│       └── UserRole.java
 ├── exception/
 │   ├── DocumentNotFoundException.java
 │   ├── DocumentProcessingException.java
 │   └── GlobalExceptionHandler.java          # Centralized error handling
-├── repository/                              # Spring Data JPA repositories
+├── repository/
 │   ├── ChatMessageRepository.java
 │   ├── ConversationRepository.java
 │   ├── DocumentChunkRepository.java
-│   └── DocumentRepository.java
+│   ├── DocumentRepository.java
+│   ├── RefreshTokenRepository.java
+│   ├── TenantRepository.java
+│   └── UserRepository.java
+├── security/
+│   ├── JwtAuthenticationFilter.java         # JWT token validation filter
+│   ├── JwtService.java                      # JWT generation & validation
+│   └── SecurityContext.java                 # Current user/tenant utility
 └── service/
+    ├── AuthService.java                     # Registration, login, token refresh
     ├── ChunkingService.java                 # Sentence-aware text chunking
+    ├── CustomUserDetailsService.java        # Spring Security user loader
     ├── DocumentExtractionService.java       # PDF/DOCX text extraction (Tika)
     ├── DocumentService.java                 # Document lifecycle orchestrator
     ├── EmbeddingService.java                # Vector embedding generation
@@ -185,8 +213,8 @@ src/main/java/com/ragengine/
 
 ## Roadmap
 
-- [ ] **Phase 1** — Core RAG Pipeline (current) ✅
-- [ ] **Phase 2** — Authentication (Spring Security + JWT), multi-tenancy
+- [x] **Phase 1** — Core RAG Pipeline ✅
+- [x] **Phase 2** — Authentication (Spring Security + JWT), multi-tenancy ✅
 - [ ] **Phase 3** — Rate limiting, audit logging, observability
 - [ ] **Phase 4** — Ollama support for fully local/private deployment
 

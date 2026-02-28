@@ -1,7 +1,7 @@
 # ContextAnchor — Technical Documentation
 
-> **Last updated:** Phase 1 — Core RAG Pipeline  
-> **Status:** Phase 1 Complete ✅ | Phase 2 In Progress | Phase 3 Planned | Phase 4 Planned
+> **Last updated:** Phase 2 — Authentication & Multi-tenancy  
+> **Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Phase 3 Planned | Phase 4 Planned
 
 ---
 
@@ -10,11 +10,12 @@
 1. [Architecture Overview](#architecture-overview)
 2. [Project Structure](#project-structure)
 3. [Core Pipeline: How RAG Works](#core-pipeline-how-rag-works)
-4. [Layer-by-Layer Breakdown](#layer-by-layer-breakdown)
-5. [Database Schema](#database-schema)
-6. [API Reference](#api-reference)
-7. [Configuration](#configuration)
-8. [Phase Checkpoints](#phase-checkpoints)
+4. [Authentication & Multi-tenancy](#authentication--multi-tenancy)
+5. [Layer-by-Layer Breakdown](#layer-by-layer-breakdown)
+6. [Database Schema](#database-schema)
+7. [API Reference](#api-reference)
+8. [Configuration](#configuration)
+9. [Phase Checkpoints](#phase-checkpoints)
 
 ---
 
@@ -27,21 +28,27 @@ ContextAnchor is a **Retrieval-Augmented Generation (RAG)** platform. The core i
                             │       REST API           │
                             │  /api/v1/documents       │
                             │  /api/v1/chat            │
+                            │  /api/v1/auth            │
                             └────────┬────────────────┘
+                                     │
+                            ┌────────┴────────┐
+                            │  JWT Auth Filter │
+                            │  (per request)   │
+                            └────────┬────────┘
                                      │
                     ┌────────────────┼────────────────┐
                     ▼                ▼                ▼
            ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-           │  Document     │ │  RAG Chat    │ │  Health      │
+           │  Document     │ │  RAG Chat    │ │  Auth        │
            │  Controller   │ │  Controller  │ │  Controller  │
-           └──────┬───────┘ └──────┬───────┘ └──────────────┘
-                  │                │
-                  ▼                ▼
-           ┌──────────────┐ ┌──────────────┐
-           │  Document     │ │  RagChat     │
-           │  Service      │ │  Service     │
-           │ (orchestrator)│ │ (RAG pipeline│
-           └──┬───┬───┬───┘ └──┬───────┬───┘
+           └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+                  │                │                │
+                  ▼                ▼                ▼
+           ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+           │  Document     │ │  RagChat     │ │  Auth        │
+           │  Service      │ │  Service     │ │  Service     │
+           │(tenant-scoped)│ │(tenant-scoped│ │ (JWT/BCrypt) │
+           └──┬───┬───┬───┘ └──┬───────┬───┘ └──────────────┘
               │   │   │        │       │
               ▼   ▼   ▼        ▼       ▼
         ┌──────┐┌──────┐┌──────┐┌──────┐┌──────────┐
@@ -86,43 +93,63 @@ src/main/java/com/ragengine/
 │
 ├── config/                                  # Configuration beans
 │   ├── AsyncConfig.java                    # Thread pool for async doc processing
-│   └── OpenApiConfig.java                  # Swagger/OpenAPI metadata
+│   ├── OpenApiConfig.java                  # Swagger/OpenAPI metadata
+│   └── SecurityConfig.java                 # Spring Security filter chain, BCrypt, CORS
 │
 ├── controller/                              # REST endpoints (thin layer)
+│   ├── AuthController.java                 # POST register/login/refresh/logout
 │   ├── ChatController.java                 # POST /chat, GET/DELETE conversations
 │   ├── DocumentController.java             # POST/GET/DELETE documents
 │   └── HealthController.java              # GET /health
 │
 ├── domain/                                  # Data models
 │   ├── dto/                                # Request/response objects (Java records)
+│   │   ├── AuthResponse.java              # accessToken + refreshToken + userInfo
 │   │   ├── ChatRequest.java               # question + documentIds + conversationId
 │   │   ├── ChatResponse.java              # answer + sources[] + conversationId
 │   │   ├── ConversationResponse.java      # conversation with messages
-│   │   └── DocumentResponse.java          # document metadata + status
+│   │   ├── DocumentResponse.java          # document metadata + status
+│   │   ├── LoginRequest.java              # email + password
+│   │   ├── RefreshTokenRequest.java       # refreshToken
+│   │   └── RegisterRequest.java           # name + email + password + organizationName
 │   └── entity/                            # JPA entities (database tables)
 │       ├── ChatMessage.java               # Single message in a conversation
-│       ├── Conversation.java              # Chat session with message history
-│       ├── Document.java                  # Uploaded document metadata
+│       ├── Conversation.java              # Chat session (tenant-scoped)
+│       ├── Document.java                  # Uploaded document (tenant-scoped)
 │       ├── DocumentChunk.java             # Individual text chunk from document
-│       └── DocumentStatus.java            # Enum: UPLOADED→PROCESSING→CHUNKING→EMBEDDING→READY|FAILED
+│       ├── DocumentStatus.java            # Enum: UPLOADED→...→READY|FAILED
+│       ├── RefreshToken.java              # Opaque refresh token entity
+│       ├── Tenant.java                    # Organization / tenant entity
+│       ├── User.java                      # User entity (implements UserDetails)
+│       └── UserRole.java                  # Enum: ADMIN, USER
 │
 ├── exception/                               # Error handling
 │   ├── DocumentNotFoundException.java
 │   ├── DocumentProcessingException.java
-│   └── GlobalExceptionHandler.java         # @RestControllerAdvice — catches all exceptions
+│   └── GlobalExceptionHandler.java         # All exceptions incl. auth (401/403)
 │
 ├── repository/                              # Spring Data JPA interfaces
 │   ├── ChatMessageRepository.java
-│   ├── ConversationRepository.java
+│   ├── ConversationRepository.java         # Tenant-scoped queries
 │   ├── DocumentChunkRepository.java
-│   └── DocumentRepository.java
+│   ├── DocumentRepository.java             # Tenant-scoped queries
+│   ├── RefreshTokenRepository.java
+│   ├── TenantRepository.java
+│   └── UserRepository.java
+│
+├── security/                                # Authentication & authorization
+│   ├── JwtAuthenticationFilter.java        # OncePerRequestFilter — validates JWT
+│   ├── JwtService.java                     # Generate/validate tokens, extract claims
+│   └── SecurityContext.java                # Utility: get current user/tenant
 │
 └── service/                                 # Business logic
+    ├── AuthService.java                    # Register, login, refresh, logout
     ├── ChunkingService.java                # Text splitting engine
+    ├── CustomUserDetailsService.java       # Loads User for Spring Security
     ├── DocumentExtractionService.java      # PDF/DOCX text extraction (Tika)
-    ├── DocumentService.java                # Upload orchestrator (async pipeline)
+    ├── DocumentService.java                # Upload orchestrator (tenant-aware)
     ├── EmbeddingService.java               # Vector generation & storage
-    └── RagChatService.java                 # Core RAG pipeline (retrieve + generate)
+    └── RagChatService.java                 # Core RAG pipeline (tenant-aware)
 ```
 
 ---
@@ -197,9 +224,109 @@ Chunk 3:                   [S7. S8. S9. S10.] ← overlaps with chunk 2
 8. PERSIST    → Saves user question + AI answer to conversation
 ```
 
-**Filter expression:** When searching the vector store, we filter by documentId so users only get results from their selected documents — never cross-contamination.
+**Filter expression:** When searching the vector store, we filter by both `tenantId` and `documentId` so results are always scoped to the user's organization — complete cross-tenant isolation at the vector level.
 
 **Conversation memory:** Multi-turn chat is supported. Previous messages are loaded and included in the prompt. Limited to `max-history-size: 10` messages to stay within the context window.
+
+---
+
+## Authentication & Multi-tenancy
+
+### JWT Authentication Flow
+
+ContextAnchor uses stateless JWT authentication. No server-side sessions.
+
+```
+┌────────┐                    ┌──────────────┐                ┌──────────┐
+│ Client │                    │  Auth API    │                │ Database │
+└───┬────┘                    └──────┬───────┘                └────┬─────┘
+    │  POST /auth/register           │                             │
+    │  {name, email, pass, org}      │                             │
+    │───────────────────────────────►│  Create Tenant + User       │
+    │                                │────────────────────────────►│
+    │  ◄─ {accessToken, refreshToken}│                             │
+    │                                │                             │
+    │  POST /auth/login              │                             │
+    │  {email, password}             │                             │
+    │───────────────────────────────►│  Verify BCrypt hash         │
+    │                                │────────────────────────────►│
+    │  ◄─ {accessToken, refreshToken}│                             │
+    │                                │                             │
+    │  GET /api/v1/documents         │                             │
+    │  Authorization: Bearer <jwt>   │                             │
+    │───────────────────────────────►│  JwtAuthFilter validates    │
+    │                                │  Loads User from DB         │
+    │                                │  Sets SecurityContext       │
+    │  ◄─ tenant-scoped results      │────────────────────────────►│
+    │                                │                             │
+    │  POST /auth/refresh            │                             │
+    │  {refreshToken}                │                             │
+    │───────────────────────────────►│  Validate refresh token     │
+    │  ◄─ {new accessToken}          │  Issue new access token     │
+```
+
+### JWT Token Structure
+
+**Access Token (15 min):**
+```json
+{
+  "sub": "user@example.com",
+  "userId": "uuid",
+  "tenantId": "uuid",
+  "role": "USER",
+  "iat": 1709136000,
+  "exp": 1709136900
+}
+```
+
+**Refresh Token (7 days):** Opaque token stored in the database. Used to issue new access tokens without re-authenticating.
+
+### Multi-tenancy Model
+
+Every organization gets a `Tenant` entity. Every user belongs to exactly one tenant. All data is scoped by `tenant_id`.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Tenant A                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
+│  │ User 1   │  │ User 2   │  │ Documents        │  │
+│  │ (ADMIN)  │  │ (USER)   │  │ (tenant_id = A)  │  │
+│  └──────────┘  └──────────┘  │ Conversations    │  │
+│                               │ (tenant_id = A)  │  │
+│                               │ Embeddings       │  │
+│                               │ (tenantId = A)   │  │
+│                               └──────────────────┘  │
+└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    Tenant B                          │
+│  ┌──────────┐                ┌──────────────────┐   │
+│  │ User 3   │                │ Documents        │   │
+│  │ (ADMIN)  │                │ (tenant_id = B)  │   │
+│  └──────────┘                │ Completely        │   │
+│                               │ isolated from A  │   │
+│                               └──────────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Isolation is enforced at 3 levels:**
+1. **Repository queries** — all queries include `WHERE tenant_id = ?`
+2. **Vector store** — similarity search filters by `tenantId` metadata
+3. **SecurityContext** — tenant ID is extracted from the JWT, never from user input
+
+### Security Components
+
+| Class | Responsibility |
+|-------|---------------|
+| `JwtService` | Generate & validate JWT tokens, extract claims |
+| `JwtAuthenticationFilter` | Intercepts requests, validates Bearer token, sets SecurityContext |
+| `SecurityContext` | Utility to get current user/tenant from Spring SecurityContextHolder |
+| `SecurityConfig` | Filter chain, BCrypt encoder, public endpoints, CORS, stateless sessions |
+| `AuthService` | Registration, login, token refresh, logout logic |
+| `CustomUserDetailsService` | Loads User entity for Spring Security |
+
+### Password Security
+
+Passwords are hashed with **BCrypt** (work factor 10). Raw passwords are never stored.
 
 ---
 
@@ -234,11 +361,36 @@ Chunk 3:                   [S7. S8. S9. S10.] ← overlaps with chunk 2
 
 ## Database Schema
 
-### Tables (managed by Flyway — `V1__init_schema.sql`)
+### Tables (managed by Flyway — `V1__init_schema.sql` + `V2__auth_multitenancy.sql`)
 
 ```sql
+tenants                      -- Organizations / tenants
+├── id (UUID, PK)
+├── name                     -- Organization name (unique)
+├── slug                     -- URL-friendly identifier (unique)
+├── created_at, updated_at
+
+users                        -- User accounts
+├── id (UUID, PK)
+├── tenant_id (FK → tenants)
+├── name                     -- Display name
+├── email                    -- Login email (unique)
+├── password                 -- BCrypt hash
+├── role                     -- ADMIN or USER
+├── enabled                  -- Account active flag
+├── created_at, updated_at
+
+refresh_tokens               -- JWT refresh tokens
+├── id (UUID, PK)
+├── user_id (FK → users)
+├── token                    -- Opaque token string (unique)
+├── expires_at               -- Expiration timestamp
+├── created_at
+
 documents                    -- Uploaded file metadata
 ├── id (UUID, PK)
+├── tenant_id (FK → tenants) -- Tenant isolation
+├── uploaded_by (FK → users) -- Who uploaded
 ├── filename                 -- UUID-prefixed stored filename
 ├── original_name            -- Original upload filename
 ├── content_type             -- MIME type
@@ -259,6 +411,8 @@ document_chunks              -- Text chunks extracted from documents
 
 conversations                -- Chat sessions
 ├── id (UUID, PK)
+├── tenant_id (FK → tenants) -- Tenant isolation
+├── created_by (FK → users)  -- Who started the conversation
 ├── title                    -- Auto-set from first question
 ├── created_at, updated_at
 
@@ -280,6 +434,15 @@ conversation_documents       -- Many-to-many: which docs are in scope
 ---
 
 ## API Reference
+
+### Auth API
+
+| Endpoint | Method | Description | Request | Response |
+|----------|--------|-------------|---------|----------|
+| `/api/v1/auth/register` | POST | Register user + tenant | RegisterRequest JSON | 200 + AuthResponse |
+| `/api/v1/auth/login` | POST | Login | LoginRequest JSON | 200 + AuthResponse |
+| `/api/v1/auth/refresh` | POST | Refresh access token | RefreshTokenRequest JSON | 200 + AuthResponse |
+| `/api/v1/auth/logout` | POST | Invalidate refresh token | RefreshTokenRequest JSON | 200 |
 
 ### Documents API
 
@@ -315,6 +478,9 @@ conversation_documents       -- Many-to-many: which docs are in scope
 
 | Property | Default | Description |
 |----------|---------|-------------|
+| `security.jwt.secret` | env var | JWT signing secret (min 32 chars) |
+| `security.jwt.access-token-expiration` | 900000 (15m) | Access token TTL in ms |
+| `security.jwt.refresh-token-expiration` | 604800000 (7d) | Refresh token TTL in ms |
 | `spring.ai.openai.api-key` | env var | OpenAI API key |
 | `spring.ai.openai.chat.options.model` | gpt-4o-mini | Chat model |
 | `spring.ai.openai.embedding.options.model` | text-embedding-3-small | Embedding model |
@@ -346,17 +512,21 @@ conversation_documents       -- Many-to-many: which docs are in scope
 - [x] Unit tests (ChunkingService — 8 tests)
 - [x] Maven wrapper
 
-### 🔄 Phase 2 — Authentication & Multi-tenancy (IN PROGRESS)
-- [ ] Spring Security configuration
-- [ ] JWT token generation and validation
-- [ ] User registration and login endpoints
-- [ ] Tenant (organization) entity and management
-- [ ] Role-based access control (ADMIN, USER)
-- [ ] Tenant-scoped document isolation
-- [ ] Tenant-scoped conversation isolation
-- [ ] Password hashing (BCrypt)
-- [ ] Auth filter chain
-- [ ] Update all existing endpoints with security context
+### ✅ Phase 2 — Authentication & Multi-tenancy (COMPLETE)
+- [x] Spring Security configuration with JWT filter chain
+- [x] JWT token generation and validation (JJWT 0.12.6)
+- [x] User registration and login endpoints (`/auth/**`)
+- [x] Tenant (organization) entity and auto-creation on registration
+- [x] Role-based access control (ADMIN, USER)
+- [x] Refresh token rotation (7-day refresh, 15-min access)
+- [x] Tenant-scoped document isolation (repository + vector store)
+- [x] Tenant-scoped conversation isolation
+- [x] Password hashing (BCrypt)
+- [x] JWT authentication filter
+- [x] SecurityContext utility for tenant/user extraction
+- [x] Updated all services with tenant-aware queries
+- [x] Auth exception handling (401/403 responses)
+- [x] Database migration (`V2__auth_multitenancy.sql`)
 
 ### 📋 Phase 3 — Enterprise Features (PLANNED)
 - [ ] Rate limiting per tenant (bucket4j or custom)
