@@ -8,6 +8,10 @@ import com.ragengine.domain.entity.Conversation;
 import com.ragengine.domain.entity.Document;
 import com.ragengine.domain.entity.DocumentStatus;
 import com.ragengine.exception.DocumentNotFoundException;
+import com.ragengine.exception.RateLimitExceededException;
+import com.ragengine.audit.AuditAction;
+import com.ragengine.audit.AuditService;
+import com.ragengine.ratelimit.RateLimitService;
 import com.ragengine.repository.ChatMessageRepository;
 import com.ragengine.repository.ConversationRepository;
 import com.ragengine.repository.DocumentRepository;
@@ -53,6 +57,8 @@ public class RagChatService {
     private final ChatMessageRepository chatMessageRepository;
     private final DocumentRepository documentRepository;
     private final SecurityContext securityContext;
+    private final RateLimitService rateLimitService;
+    private final AuditService auditService;
 
     @Value("${rag.chat.top-k-results:5}")
     private int topKResults;
@@ -72,6 +78,13 @@ public class RagChatService {
     @Transactional
     public ChatResponse chat(ChatRequest request) {
         log.info("Processing chat request: '{}'", request.question());
+
+        // Check chat rate limit
+        UUID tenantId = securityContext.getCurrentTenantId();
+        if (!rateLimitService.tryConsumeChatRequest(tenantId)) {
+            throw new RateLimitExceededException(
+                    "Chat rate limit exceeded. Please try again shortly.");
+        }
 
         // Validate that all requested documents are ready
         validateDocuments(request.documentIds());
@@ -119,6 +132,9 @@ public class RagChatService {
 
         log.info("Chat response generated for conversation: {}", conversation.getId());
 
+        auditService.logAction(AuditAction.CHAT_QUERY, "CONVERSATION",
+                conversation.getId(), "Query: " + truncate(request.question(), 200));
+
         return ChatResponse.builder()
                 .conversationId(conversation.getId())
                 .answer(aiResponse)
@@ -158,6 +174,10 @@ public class RagChatService {
         Conversation conversation = conversationRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + id));
         conversationRepository.delete(conversation);
+
+        auditService.logAction(AuditAction.CONVERSATION_DELETE, "CONVERSATION",
+                id, null);
+
         log.info("Conversation deleted: {}", id);
     }
 

@@ -5,6 +5,8 @@ import com.ragengine.domain.dto.LoginRequest;
 import com.ragengine.domain.dto.RefreshTokenRequest;
 import com.ragengine.domain.dto.RegisterRequest;
 import com.ragengine.domain.entity.*;
+import com.ragengine.audit.AuditAction;
+import com.ragengine.audit.AuditService;
 import com.ragengine.repository.RefreshTokenRepository;
 import com.ragengine.repository.TenantRepository;
 import com.ragengine.repository.UserRepository;
@@ -46,6 +48,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
+    private final AuditService auditService;
 
     /**
      * Registers a new user and creates their tenant (organization).
@@ -84,6 +87,11 @@ public class AuthService {
         log.info("User registered: {} (tenant: {}, role: {})",
                 user.getEmail(), tenant.getName(), user.getRole());
 
+        auditService.logAction(AuditAction.USER_REGISTER,
+                tenant.getId(), user.getId(), user.getEmail(),
+                "USER", user.getId(),
+                "Registered with role " + user.getRole());
+
         return generateAuthResponse(user);
     }
 
@@ -97,6 +105,10 @@ public class AuthService {
                     new UsernamePasswordAuthenticationToken(request.email(), request.password())
             );
         } catch (BadCredentialsException e) {
+            auditService.logAction(AuditAction.USER_LOGIN_FAILED,
+                    null, null, request.email(),
+                    "USER", null,
+                    "Failed login attempt for " + request.email());
             throw new BadCredentialsException("Invalid email or password");
         }
 
@@ -111,6 +123,11 @@ public class AuthService {
         refreshTokenRepository.deleteByUserId(user.getId());
 
         log.info("User logged in: {}", user.getEmail());
+
+        auditService.logAction(AuditAction.USER_LOGIN,
+                user.getTenant().getId(), user.getId(), user.getEmail(),
+                "USER", user.getId(), null);
+
         return generateAuthResponse(user);
     }
 
@@ -133,6 +150,11 @@ public class AuthService {
         refreshTokenRepository.delete(refreshToken);
 
         log.info("Token refreshed for user: {}", user.getEmail());
+
+        auditService.logAction(AuditAction.TOKEN_REFRESH,
+                user.getTenant().getId(), user.getId(), user.getEmail(),
+                "USER", user.getId(), null);
+
         return generateAuthResponse(user);
     }
 

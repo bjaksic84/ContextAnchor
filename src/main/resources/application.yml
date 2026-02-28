@@ -52,6 +52,11 @@ security:
 
 # Application-specific configuration
 rag:
+  rate-limit:
+    enabled: true
+    requests-per-minute: 60
+    chat-requests-per-minute: 20
+    uploads-per-hour: 30
   chunking:
     chunk-size: 800
     chunk-overlap: 200
@@ -71,12 +76,18 @@ rag:
       information to answer the question, say so clearly. Cite the relevant parts of the documents
       when possible.
 
-# Actuator
+# Actuator & Observability
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: context-anchor
 
 # Swagger / OpenAPI
 springdoc:

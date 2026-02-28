@@ -1,7 +1,7 @@
 # ContextAnchor — Technical Documentation
 
-> **Last updated:** Phase 2 — Authentication & Multi-tenancy  
-> **Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Phase 3 Planned | Phase 4 Planned
+> **Last updated:** Phase 3 — Enterprise Features  
+> **Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Phase 3 Complete ✅ | Phase 4 Planned
 
 ---
 
@@ -11,11 +11,13 @@
 2. [Project Structure](#project-structure)
 3. [Core Pipeline: How RAG Works](#core-pipeline-how-rag-works)
 4. [Authentication & Multi-tenancy](#authentication--multi-tenancy)
-5. [Layer-by-Layer Breakdown](#layer-by-layer-breakdown)
-6. [Database Schema](#database-schema)
-7. [API Reference](#api-reference)
-8. [Configuration](#configuration)
-9. [Phase Checkpoints](#phase-checkpoints)
+5. [Enterprise Features (Phase 3)](#enterprise-features-phase-3)
+6. [Layer-by-Layer Breakdown](#layer-by-layer-breakdown)
+7. [Database Schema](#database-schema)
+8. [API Reference](#api-reference)
+9. [Configuration](#configuration)
+10. [Testing](#testing)
+11. [Phase Checkpoints](#phase-checkpoints)
 
 ---
 
@@ -29,33 +31,45 @@ ContextAnchor is a **Retrieval-Augmented Generation (RAG)** platform. The core i
                             │  /api/v1/documents       │
                             │  /api/v1/chat            │
                             │  /api/v1/auth            │
+                            │  /api/v1/api-keys        │
+                            │  /api/v1/audit           │
                             └────────┬────────────────┘
                                      │
-                            ┌────────┴────────┐
-                            │  JWT Auth Filter │
-                            │  (per request)   │
-                            └────────┬────────┘
+                      ┌──────────────┼──────────────┐
+                      │   Request Logging Filter     │
+                      │   (correlation IDs, timing)  │
+                      └──────────────┬──────────────┘
                                      │
-                    ┌────────────────┼────────────────┐
-                    ▼                ▼                ▼
-           ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-           │  Document     │ │  RAG Chat    │ │  Auth        │
-           │  Controller   │ │  Controller  │ │  Controller  │
-           └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-                  │                │                │
-                  ▼                ▼                ▼
-           ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-           │  Document     │ │  RagChat     │ │  Auth        │
-           │  Service      │ │  Service     │ │  Service     │
-           │(tenant-scoped)│ │(tenant-scoped│ │ (JWT/BCrypt) │
-           └──┬───┬───┬───┘ └──┬───────┬───┘ └──────────────┘
-              │   │   │        │       │
-              ▼   ▼   ▼        ▼       ▼
-        ┌──────┐┌──────┐┌──────┐┌──────┐┌──────────┐
-        │Extract││Chunk ││Embed ││Vector││  OpenAI  │
-        │Service││Svc   ││Svc   ││Store ││  LLM     │
-        │(Tika) ││      ││      ││(pg)  ││          │
-        └──────┘└──────┘└──────┘└──────┘└──────────┘
+                      ┌──────────────┼──────────────┐
+                      │   Rate Limit Filter          │
+                      │   (Bucket4j per-tenant)      │
+                      └──────────────┬──────────────┘
+                                     │
+                      ┌──────────────┼──────────────┐
+                      │   JWT / API Key Auth Filter  │
+                      │   (dual authentication)      │
+                      └──────────────┬──────────────┘
+                                     │
+           ┌─────────────────┬───────┴───────┬──────────────┐
+           ▼                 ▼               ▼              ▼
+    ┌──────────────┐ ┌──────────────┐ ┌──────────┐ ┌──────────────┐
+    │  Document     │ │  RAG Chat    │ │  Auth    │ │  API Key /   │
+    │  Controller   │ │  Controller  │ │  Ctrl    │ │  Audit Ctrl  │
+    └──────┬───────┘ └──────┬───────┘ └────┬─────┘ └──────┬───────┘
+           │                │              │              │
+           ▼                ▼              ▼              ▼
+    ┌──────────────┐ ┌──────────────┐ ┌──────────┐ ┌──────────────┐
+    │  Document     │ │  RagChat     │ │  Auth    │ │  ApiKey /    │
+    │  Service      │ │  Service     │ │  Service │ │  Audit Svc   │
+    │(rate-limited) │ │(rate-limited)│ │(audited) │ │  (async)     │
+    └──┬───┬───┬───┘ └──┬───────┬───┘ └──────────┘ └──────────────┘
+       │   │   │        │       │
+       ▼   ▼   ▼        ▼       ▼
+ ┌──────┐┌──────┐┌──────┐┌──────┐┌──────────┐
+ │Extract││Chunk ││Embed ││Vector││  OpenAI  │
+ │Service││Svc   ││Svc   ││Store ││  LLM     │
+ │(Tika) ││      ││      ││(pg)  ││          │
+ └──────┘└──────┘└──────┘└──────┘└──────────┘
                                    │
                             ┌──────┴──────┐
                             │ PostgreSQL  │
@@ -91,16 +105,25 @@ HTTP POST (question + docIds) → ChatController → RagChatService
 src/main/java/com/ragengine/
 ├── EnterpriseRagPlatformApplication.java   # Spring Boot entry point
 │
+├── audit/                                   # Audit logging subsystem
+│   ├── AuditAction.java                    # Constants for audit event types
+│   ├── AuditLog.java                       # JPA entity for audit records
+│   ├── AuditLogRepository.java             # Tenant-scoped audit queries
+│   └── AuditService.java                   # Async audit event recording
+│
 ├── config/                                  # Configuration beans
 │   ├── AsyncConfig.java                    # Thread pool for async doc processing
 │   ├── OpenApiConfig.java                  # Swagger/OpenAPI metadata
+│   ├── RequestLoggingFilter.java           # Correlation IDs + request timing
 │   └── SecurityConfig.java                 # Spring Security filter chain, BCrypt, CORS
 │
 ├── controller/                              # REST endpoints (thin layer)
+│   ├── ApiKeyController.java               # POST/GET/DELETE API keys
+│   ├── AuditController.java                # GET audit logs (paginated)
 │   ├── AuthController.java                 # POST register/login/refresh/logout
 │   ├── ChatController.java                 # POST /chat, GET/DELETE conversations
 │   ├── DocumentController.java             # POST/GET/DELETE documents
-│   └── HealthController.java              # GET /health
+│   └── HealthController.java              # GET /health (DB, runtime, uptime)
 │
 ├── domain/                                  # Data models
 │   ├── dto/                                # Request/response objects (Java records)
@@ -113,6 +136,7 @@ src/main/java/com/ragengine/
 │   │   ├── RefreshTokenRequest.java       # refreshToken
 │   │   └── RegisterRequest.java           # name + email + password + organizationName
 │   └── entity/                            # JPA entities (database tables)
+│       ├── ApiKey.java                    # API key entity (SHA-256 hashed)
 │       ├── ChatMessage.java               # Single message in a conversation
 │       ├── Conversation.java              # Chat session (tenant-scoped)
 │       ├── Document.java                  # Uploaded document (tenant-scoped)
@@ -128,7 +152,14 @@ src/main/java/com/ragengine/
 │   ├── DocumentProcessingException.java
 │   └── GlobalExceptionHandler.java         # All exceptions incl. auth (401/403)
 │
+├── ratelimit/                               # Rate limiting subsystem
+│   ├── RateLimitConfig.java                # ConfigurationProperties for limits
+│   ├── RateLimitExceededException.java     # Custom 429 exception
+│   ├── RateLimitFilter.java                # HTTP filter (per-tenant buckets)
+│   └── RateLimitService.java               # Bucket4j token bucket management
+│
 ├── repository/                              # Spring Data JPA interfaces
+│   ├── ApiKeyRepository.java               # API key lookup by hash
 │   ├── ChatMessageRepository.java
 │   ├── ConversationRepository.java         # Tenant-scoped queries
 │   ├── DocumentChunkRepository.java
@@ -138,18 +169,19 @@ src/main/java/com/ragengine/
 │   └── UserRepository.java
 │
 ├── security/                                # Authentication & authorization
-│   ├── JwtAuthenticationFilter.java        # OncePerRequestFilter — validates JWT
+│   ├── JwtAuthenticationFilter.java        # Dual auth: JWT + API Key (X-API-Key)
 │   ├── JwtService.java                     # Generate/validate tokens, extract claims
 │   └── SecurityContext.java                # Utility: get current user/tenant
 │
 └── service/                                 # Business logic
-    ├── AuthService.java                    # Register, login, refresh, logout
+    ├── ApiKeyService.java                  # API key creation, validation, revocation
+    ├── AuthService.java                    # Register, login, refresh, logout (audited)
     ├── ChunkingService.java                # Text splitting engine
     ├── CustomUserDetailsService.java       # Loads User for Spring Security
     ├── DocumentExtractionService.java      # PDF/DOCX text extraction (Tika)
-    ├── DocumentService.java                # Upload orchestrator (tenant-aware)
+    ├── DocumentService.java                # Upload orchestrator (rate-limited, audited)
     ├── EmbeddingService.java               # Vector generation & storage
-    └── RagChatService.java                 # Core RAG pipeline (tenant-aware)
+    └── RagChatService.java                 # Core RAG pipeline (rate-limited, audited)
 ```
 
 ---
@@ -318,15 +350,107 @@ Every organization gets a `Tenant` entity. Every user belongs to exactly one ten
 | Class | Responsibility |
 |-------|---------------|
 | `JwtService` | Generate & validate JWT tokens, extract claims |
-| `JwtAuthenticationFilter` | Intercepts requests, validates Bearer token, sets SecurityContext |
+| `JwtAuthenticationFilter` | Intercepts requests, validates JWT or API Key, sets SecurityContext |
 | `SecurityContext` | Utility to get current user/tenant from Spring SecurityContextHolder |
 | `SecurityConfig` | Filter chain, BCrypt encoder, public endpoints, CORS, stateless sessions |
 | `AuthService` | Registration, login, token refresh, logout logic |
 | `CustomUserDetailsService` | Loads User entity for Spring Security |
+| `ApiKeyService` | Create/validate/revoke API keys (SHA-256 hashed) |
+| `RateLimitFilter` | Per-tenant rate limiting (Bucket4j token buckets) |
+| `RequestLoggingFilter` | Correlation IDs (X-Request-Id), timing, status logging |
 
 ### Password Security
 
 Passwords are hashed with **BCrypt** (work factor 10). Raw passwords are never stored.
+
+---
+
+## Enterprise Features (Phase 3)
+
+### Rate Limiting
+
+Per-tenant rate limiting using **Bucket4j** token-bucket algorithm. Three independent buckets per tenant:
+
+| Bucket | Default Limit | Applies To |
+|--------|--------------|------------|
+| API requests | 60 / minute | All authenticated endpoints |
+| Chat requests | 20 / minute | `/api/v1/chat` |
+| Upload requests | 30 / hour | `POST /api/v1/documents` |
+
+**Architecture:**
+```
+Request → RequestLoggingFilter (@Order 1)
+        → RateLimitFilter     (@Order 2) → 429 if exceeded
+        → JwtAuthFilter       (Security) → 401/403 if invalid
+        → Controller
+```
+
+- Buckets are created lazily per tenant on first request
+- Greedy refill strategy (tokens replenish continuously)
+- Responds with HTTP 429 + `Retry-After` header when limit exceeded
+- Can be disabled entirely via `rag.rate-limit.enabled=false`
+
+### Audit Logging
+
+All security-relevant actions are recorded asynchronously to an `audit_logs` table:
+
+| Action | Trigger |
+|--------|---------|
+| `USER_REGISTER` | New user registration |
+| `USER_LOGIN` / `USER_LOGIN_FAILED` | Login attempts |
+| `TOKEN_REFRESH` | Access token refresh |
+| `DOCUMENT_UPLOAD` / `DOCUMENT_DELETE` | Document lifecycle |
+| `CHAT_QUERY` | RAG queries |
+| `CONVERSATION_DELETE` | Conversation deletion |
+| `API_KEY_CREATED` / `API_KEY_REVOKED` | API key lifecycle |
+| `RATE_LIMIT_EXCEEDED` | Rate limit violations |
+
+- **Async recording** — audit writes happen on a separate thread (`@Async`) so they don't slow down the main request
+- FK constraints on `tenant_id` / `user_id` are intentionally removed (`V4` migration) to avoid race conditions with async writes
+- Queryable via `GET /api/v1/audit` with filters for action type, user ID, and pagination
+
+### API Key Authentication
+
+Alternative to JWT for service-to-service or programmatic access:
+
+```
+Client generates key → POST /api/v1/api-keys → receives raw key (ctx_<32 hex chars>)
+                        (key is SHA-256 hashed before storage — raw key shown ONCE)
+
+Subsequent requests → X-API-Key: ctx_abc123...
+                   → JwtAuthFilter hashes the key, looks up in DB
+                   → Sets SecurityContext with the key owner's identity
+```
+
+- Keys are stored as SHA-256 hashes (raw key never stored)
+- Prefix-based identification (`ctx_` + first 8 chars visible for management)
+- Optional expiration dates
+- Can be revoked without affecting other keys
+- Dual auth: filter checks `X-API-Key` header first, then falls back to `Bearer` JWT
+
+### Request Logging & Correlation IDs
+
+Every request receives a unique correlation ID (`X-Request-Id` header):
+
+- If the client sends an `X-Request-Id`, it's preserved
+- Otherwise, a UUID is generated
+- Logged at request start and completion with timing, status, and method
+- Enables request tracing across distributed systems
+
+### Health Check Enhancements
+
+`GET /api/v1/health` now reports:
+
+```json
+{
+  "status": "UP",
+  "timestamp": "2025-01-15T10:30:00",
+  "uptime": "2h 15m 30s",
+  "database": "CONNECTED",
+  "java": "25",
+  "springBoot": "3.4.3"
+}
+```
 
 ---
 
@@ -361,7 +485,7 @@ Passwords are hashed with **BCrypt** (work factor 10). Raw passwords are never s
 
 ## Database Schema
 
-### Tables (managed by Flyway — `V1__init_schema.sql` + `V2__auth_multitenancy.sql`)
+### Tables (managed by Flyway — `V1__init_schema.sql` through `V4__drop_audit_fk_constraints.sql`)
 
 ```sql
 tenants                      -- Organizations / tenants
@@ -429,6 +553,30 @@ conversation_documents       -- Many-to-many: which docs are in scope
 ├── document_id (FK)
 ```
 
+audit_logs                   -- Security audit trail
+├── id (UUID, PK)
+├── tenant_id (UUID)         -- Tenant context (no FK — async writes)
+├── user_id (UUID)           -- Acting user (no FK — async writes)
+├── action                   -- Audit action constant
+├── resource_type            -- Entity type affected (nullable)
+├── resource_id              -- Entity ID affected (nullable)
+├── details                  -- Additional context (nullable)
+├── ip_address               -- Client IP (nullable)
+├── created_at
+
+api_keys                     -- API key credentials
+├── id (UUID, PK)
+├── tenant_id (FK → tenants)
+├── user_id (FK → users)
+├── name                     -- Human-readable key name
+├── key_hash                 -- SHA-256 hash (unique)
+├── key_prefix               -- First 8 chars for identification
+├── active                   -- Can be revoked
+├── expires_at               -- Optional expiration
+├── last_used_at             -- Usage tracking
+├── created_at
+```
+
 **Additionally:** Spring AI automatically manages a `vector_store` table for pgvector embeddings.
 
 ---
@@ -462,13 +610,28 @@ conversation_documents       -- Many-to-many: which docs are in scope
 | `/api/v1/chat/conversations/{id}` | GET | Get conversation | — | ConversationResponse |
 | `/api/v1/chat/conversations/{id}` | DELETE | Delete conversation | — | 204 |
 
+### API Keys (requires Bearer token)
+
+| Endpoint | Method | Description | Request | Response |
+|----------|--------|-------------|---------|----------|
+| `/api/v1/api-keys` | POST | Create API key | `{ "name": "...", "expiresInDays": 90 }` | 200 + key (shown once) |
+| `/api/v1/api-keys` | GET | List active keys | — | ApiKeyResponse[] |
+| `/api/v1/api-keys/{id}` | DELETE | Revoke a key | — | 204 |
+
+### Audit Logs (requires Bearer token)
+
+| Endpoint | Method | Description | Request | Response |
+|----------|--------|-------------|---------|----------|
+| `/api/v1/audit` | GET | Query audit logs | `?action=&userId=&page=&size=` | Page\<AuditLogResponse\> |
+
 ### System
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/health` | GET | Health check |
+| `/api/v1/health` | GET | Health check (DB status, uptime, runtime) |
 | `/swagger-ui.html` | GET | Interactive API docs |
 | `/api-docs` | GET | OpenAPI JSON spec |
+| `/actuator/prometheus` | GET | Prometheus metrics |
 
 ---
 
@@ -491,6 +654,51 @@ conversation_documents       -- Many-to-many: which docs are in scope
 | `rag.chat.top-k-results` | 5 | Number of chunks retrieved per query |
 | `rag.chat.max-history-size` | 10 | Max messages in conversation context |
 | `rag.upload.storage-path` | ./uploads | File storage directory |
+| `rag.rate-limit.enabled` | true | Enable/disable rate limiting |
+| `rag.rate-limit.requests-per-minute` | 60 | General API rate limit per tenant |
+| `rag.rate-limit.chat-requests-per-minute` | 20 | Chat endpoint rate limit per tenant |
+| `rag.rate-limit.uploads-per-hour` | 30 | Upload endpoint rate limit per tenant |
+
+---
+
+## Testing
+
+### Test Infrastructure
+
+| Component | Purpose |
+|-----------|--------|
+| **Testcontainers** | Spins up a real PostgreSQL 16 + pgvector instance in Docker for integration tests |
+| **BaseIntegrationTest** | Shared base class — manages the container lifecycle, sets dynamic datasource properties |
+| **TestAiConfig** | `@TestConfiguration` providing stub `VectorStore` and `ChatClient.Builder` (no real AI calls in tests) |
+| **application-test.yml** | Test profile config — disables rate limiting, uses test JWT secret |
+
+### Test Suite Summary
+
+| Test Class | Type | Tests | Covers |
+|------------|------|-------|--------|
+| `ChunkingServiceTest` | Unit | 8 | Sentence-aware text splitting, overlap, edge cases |
+| `RateLimitServiceTest` | Unit | 10 | Bucket4j token buckets, tenant isolation, disabled mode |
+| `ApiKeyServiceTest` | Unit | 3 | SHA-256 hashing consistency and format |
+| `AuthControllerIntegrationTest` | Integration | 9 | Registration, login, refresh, logout, error cases |
+| `ApiKeyIntegrationTest` | Integration | 7 | API key CRUD, authentication via X-API-Key header |
+| `AuditControllerIntegrationTest` | Integration | 5 | Audit log queries, filtering, pagination |
+| `HealthControllerIntegrationTest` | Integration | 6 | Health endpoint fields, DB connectivity, public access |
+| **Total** | | **48** | |
+
+### Running Tests
+
+```bash
+# All tests (requires Docker for Testcontainers)
+./mvnw test
+
+# Unit tests only
+./mvnw test -Dtest="ChunkingServiceTest,RateLimitServiceTest,ApiKeyServiceTest"
+
+# Integration tests only
+./mvnw test -Dtest="*IntegrationTest"
+```
+
+> **Note:** Java 25 + Mockito/ByteBuddy incompatibility — tests use manual stub beans (`TestAiConfig`) instead of `@MockitoBean`.
 
 ---
 
@@ -528,14 +736,15 @@ conversation_documents       -- Many-to-many: which docs are in scope
 - [x] Auth exception handling (401/403 responses)
 - [x] Database migration (`V2__auth_multitenancy.sql`)
 
-### 📋 Phase 3 — Enterprise Features (PLANNED)
-- [ ] Rate limiting per tenant (bucket4j or custom)
-- [ ] Audit logging (who queried what, when)
-- [ ] OpenTelemetry observability (traces, metrics)
-- [ ] Request/response logging
-- [ ] API key authentication (alternative to JWT)
-- [ ] Health check enhancements
-- [ ] Integration tests with Testcontainers
+### ✅ Phase 3 — Enterprise Features (COMPLETE)
+- [x] Rate limiting per tenant (Bucket4j token-bucket algorithm)
+- [x] Audit logging — async recording of all security-relevant actions
+- [x] Micrometer Prometheus metrics endpoint (`/actuator/prometheus`)
+- [x] Request/response logging with correlation IDs (X-Request-Id)
+- [x] API key authentication (alternative to JWT, SHA-256 hashed)
+- [x] Health check enhancements (DB status, uptime, runtime info)
+- [x] Integration tests with Testcontainers (27 integration + 21 unit = 48 total)
+- [x] Database migrations (`V3__audit_and_api_keys.sql`, `V4__drop_audit_fk_constraints.sql`)
 
 ### 📋 Phase 4 — Local/Private Mode (PLANNED)
 - [ ] Ollama integration for local LLM inference

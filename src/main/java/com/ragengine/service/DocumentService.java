@@ -8,6 +8,10 @@ import com.ragengine.domain.entity.Tenant;
 import com.ragengine.domain.entity.User;
 import com.ragengine.exception.DocumentNotFoundException;
 import com.ragengine.exception.DocumentProcessingException;
+import com.ragengine.exception.RateLimitExceededException;
+import com.ragengine.audit.AuditAction;
+import com.ragengine.audit.AuditService;
+import com.ragengine.ratelimit.RateLimitService;
 import com.ragengine.repository.DocumentChunkRepository;
 import com.ragengine.repository.DocumentRepository;
 import com.ragengine.security.SecurityContext;
@@ -41,11 +45,13 @@ public class DocumentService {
     private final ChunkingService chunkingService;
     private final EmbeddingService embeddingService;
     private final SecurityContext securityContext;
+    private final RateLimitService rateLimitService;
+    private final AuditService auditService;
 
     @Value("${rag.upload.storage-path:./uploads}")
     private String storagePath;
 
-    @Value("${rag.upload.allowed-types}")
+    @Value("${rag.upload.allowed-types:application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document}")
     private List<String> allowedTypes;
 
     /**
@@ -60,6 +66,12 @@ public class DocumentService {
 
         User currentUser = securityContext.getCurrentUser();
         Tenant tenant = currentUser.getTenant();
+
+        // Check upload rate limit
+        if (!rateLimitService.tryConsumeUploadRequest(tenant.getId())) {
+            throw new RateLimitExceededException(
+                    "Document upload rate limit exceeded. Please try again later.");
+        }
 
         // Generate unique filename
         String filename = UUID.randomUUID() + "_" + file.getOriginalFilename();
@@ -80,6 +92,9 @@ public class DocumentService {
 
         document = documentRepository.save(document);
         log.info("Document uploaded: {} (ID: {})", document.getOriginalName(), document.getId());
+
+        auditService.logAction(AuditAction.DOCUMENT_UPLOAD, "DOCUMENT",
+                document.getId(), document.getOriginalName() + " (" + file.getSize() + " bytes)");
 
         // Trigger async processing
         processDocumentAsync(document.getId(), file);
@@ -178,6 +193,9 @@ public class DocumentService {
         }
 
         log.info("Document deleted: {} (ID: {})", document.getOriginalName(), id);
+
+        auditService.logAction(AuditAction.DOCUMENT_DELETE, "DOCUMENT",
+                id, document.getOriginalName());
     }
 
     // ============================

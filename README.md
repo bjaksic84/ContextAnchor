@@ -121,6 +121,28 @@ Navigate to **http://localhost:8080/swagger-ui.html** to explore the API.
 | `GET`  | `/api/v1/chat/conversations/{id}` | Get conversation with history |
 | `DELETE` | `/api/v1/chat/conversations/{id}` | Delete a conversation |
 
+### API Keys (requires Bearer token)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/api-keys` | Create a new API key |
+| `GET`  | `/api/v1/api-keys` | List active API keys |
+| `DELETE` | `/api/v1/api-keys/{id}` | Revoke an API key |
+
+### Audit Logs (requires Bearer token)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/api/v1/audit` | Query audit logs (filterable, paginated) |
+
+### System
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/api/v1/health` | Health check (DB, uptime, runtime) |
+| `GET`  | `/actuator/prometheus` | Prometheus metrics |
+| `GET`  | `/swagger-ui.html` | Interactive API docs |
+
 ### Example Chat Request
 
 ```json
@@ -156,26 +178,27 @@ Navigate to **http://localhost:8080/swagger-ui.html** to explore the API.
 ```
 src/main/java/com/ragengine/
 ├── EnterpriseRagPlatformApplication.java    # Main entry point
+├── audit/
+│   ├── AuditAction.java                    # Audit event type constants
+│   ├── AuditLog.java                       # Audit record entity
+│   ├── AuditLogRepository.java             # Tenant-scoped audit queries
+│   └── AuditService.java                   # Async audit event recording
 ├── config/
-│   ├── AsyncConfig.java                     # Thread pool for async processing
-│   ├── OpenApiConfig.java                   # Swagger/OpenAPI configuration
-│   └── SecurityConfig.java                  # Spring Security filter chain
+│   ├── AsyncConfig.java                    # Thread pool for async processing
+│   ├── OpenApiConfig.java                  # Swagger/OpenAPI configuration
+│   ├── RequestLoggingFilter.java           # Correlation IDs + request timing
+│   └── SecurityConfig.java                 # Spring Security filter chain
 ├── controller/
-│   ├── AuthController.java                  # Auth REST endpoints
-│   ├── ChatController.java                  # Chat REST endpoints
-│   ├── DocumentController.java              # Document REST endpoints
-│   └── HealthController.java                # Health check endpoint
+│   ├── ApiKeyController.java               # API key CRUD endpoints
+│   ├── AuditController.java                # Audit log query endpoint
+│   ├── AuthController.java                 # Auth REST endpoints
+│   ├── ChatController.java                 # Chat REST endpoints
+│   ├── DocumentController.java             # Document REST endpoints
+│   └── HealthController.java               # Health check (DB, uptime, runtime)
 ├── domain/
 │   ├── dto/                                 # Request/response DTOs
-│   │   ├── AuthResponse.java
-│   │   ├── ChatRequest.java
-│   │   ├── ChatResponse.java
-│   │   ├── ConversationResponse.java
-│   │   ├── DocumentResponse.java
-│   │   ├── LoginRequest.java
-│   │   ├── RefreshTokenRequest.java
-│   │   └── RegisterRequest.java
 │   └── entity/                              # JPA entities
+│       ├── ApiKey.java                      # API key (SHA-256 hashed)
 │       ├── ChatMessage.java
 │       ├── Conversation.java
 │       ├── Document.java
@@ -189,7 +212,13 @@ src/main/java/com/ragengine/
 │   ├── DocumentNotFoundException.java
 │   ├── DocumentProcessingException.java
 │   └── GlobalExceptionHandler.java          # Centralized error handling
+├── ratelimit/
+│   ├── RateLimitConfig.java                # Rate limit configuration
+│   ├── RateLimitExceededException.java     # Custom 429 exception
+│   ├── RateLimitFilter.java                # Per-tenant rate limiting filter
+│   └── RateLimitService.java               # Bucket4j token bucket management
 ├── repository/
+│   ├── ApiKeyRepository.java               # API key lookup by hash
 │   ├── ChatMessageRepository.java
 │   ├── ConversationRepository.java
 │   ├── DocumentChunkRepository.java
@@ -198,11 +227,12 @@ src/main/java/com/ragengine/
 │   ├── TenantRepository.java
 │   └── UserRepository.java
 ├── security/
-│   ├── JwtAuthenticationFilter.java         # JWT token validation filter
+│   ├── JwtAuthenticationFilter.java         # Dual auth: JWT + API Key
 │   ├── JwtService.java                      # JWT generation & validation
 │   └── SecurityContext.java                 # Current user/tenant utility
 └── service/
-    ├── AuthService.java                     # Registration, login, token refresh
+    ├── ApiKeyService.java                   # API key creation & validation
+    ├── AuthService.java                     # Registration, login, tokens
     ├── ChunkingService.java                 # Sentence-aware text chunking
     ├── CustomUserDetailsService.java        # Spring Security user loader
     ├── DocumentExtractionService.java       # PDF/DOCX text extraction (Tika)
@@ -215,7 +245,7 @@ src/main/java/com/ragengine/
 
 - [x] **Phase 1** — Core RAG Pipeline ✅
 - [x] **Phase 2** — Authentication (Spring Security + JWT), multi-tenancy ✅
-- [ ] **Phase 3** — Rate limiting, audit logging, observability
+- [x] **Phase 3** — Rate limiting, audit logging, API keys, observability, 48 tests ✅
 - [ ] **Phase 4** — Ollama support for fully local/private deployment
 
 ## License
