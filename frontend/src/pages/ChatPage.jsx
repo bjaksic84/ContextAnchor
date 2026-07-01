@@ -72,7 +72,7 @@ export default function ChatPage() {
           data.messages.map((m) => ({
             role: m.role,
             content: m.content,
-            sources: null,
+            sources: m.sources || null,
           }))
         );
       })

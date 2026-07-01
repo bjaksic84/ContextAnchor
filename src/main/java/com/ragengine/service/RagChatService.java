@@ -353,8 +353,31 @@ public class RagChatService {
                 .conversation(conversation)
                 .role(role)
                 .content(content)
+                .sources(toSourceMaps(sources))
                 .build();
         chatMessageRepository.save(message);
+    }
+
+    /**
+     * Converts source citations into JSON-serializable maps for JSONB persistence.
+     * Returns {@code null} for messages without sources (e.g. user messages).
+     */
+    private List<Map<String, Object>> toSourceMaps(List<ChatResponse.Source> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return null;
+        }
+        return sources.stream()
+                .map(src -> {
+                    Map<String, Object> map = new LinkedHashMap<>();
+                    map.put("documentId", src.documentId() != null ? src.documentId().toString() : null);
+                    map.put("documentName", src.documentName());
+                    map.put("chunkContent", src.chunkContent());
+                    map.put("chunkIndex", src.chunkIndex());
+                    map.put("pageNumber", src.pageNumber());
+                    map.put("similarityScore", src.similarityScore());
+                    return map;
+                })
+                .collect(Collectors.toList());
     }
 
     private String truncate(String text, int maxLength) {
@@ -379,6 +402,7 @@ public class RagChatService {
                         .id(msg.getId())
                         .role(msg.getRole())
                         .content(msg.getContent())
+                        .sources(msg.getSources())
                         .createdAt(msg.getCreatedAt())
                         .build())
                 .toList();

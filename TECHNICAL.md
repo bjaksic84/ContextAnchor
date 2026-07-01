@@ -153,11 +153,11 @@ src/main/java/com/ragengine/
 ├── exception/                               # Error handling
 │   ├── DocumentNotFoundException.java
 │   ├── DocumentProcessingException.java
+│   ├── RateLimitExceededException.java      # Custom 429 exception
 │   └── GlobalExceptionHandler.java         # All exceptions incl. auth (401/403)
 │
 ├── ratelimit/                               # Rate limiting subsystem
 │   ├── RateLimitConfig.java                # ConfigurationProperties for limits
-│   ├── RateLimitExceededException.java     # Custom 429 exception
 │   ├── RateLimitFilter.java                # HTTP filter (per-tenant buckets)
 │   └── RateLimitService.java               # Bucket4j token bucket management
 │
@@ -447,14 +447,25 @@ Every request receives a unique correlation ID (`X-Request-Id` header):
 ```json
 {
   "status": "UP",
-  "timestamp": "2025-01-15T10:30:00",
+  "service": "ContextAnchor - Enterprise RAG Platform",
+  "timestamp": "2026-02-28T10:30:00",
   "uptime": "2h 15m 30s",
-  "database": "CONNECTED",
+  "database": {
+    "status": "UP",
+    "database": "PostgreSQL",
+    "version": "16.x"
+  },
   "ai": { "provider": "openai", "mode": "cloud" },
-  "java": "25",
-  "springBoot": "3.4.3"
+  "runtime": {
+    "javaVersion": "21.0.6",
+    "javaVendor": "Eclipse Adoptium",
+    "maxMemoryMB": "4096",
+    "freeMemoryMB": "512"
+  }
 }
 ```
+
+> In local mode the `ai` block reports `{ "provider": "ollama", "mode": "local/private" }`. If the app is packaged with build info, a `build` object (name/version/artifact) is also included.
 
 ---
 
@@ -503,7 +514,7 @@ RAG_AI_PROVIDER=ollama ./mvnw spring-boot:run
 # Start Postgres + Ollama + model initialization
 docker compose --profile local up -d
 
-# Ollama auto-pulls llama3.1 + nomic-embed-text on first startup
+# Ollama auto-pulls llama3.2:3b + nomic-embed-text on first startup
 # Then start the app with local profile
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
@@ -512,7 +523,7 @@ docker compose --profile local up -d
 
 | Purpose | Default Model | Dimensions | Alternatives |
 |---------|--------------|------------|-------------|
-| Chat | `llama3.1` (8B) | — | `mistral`, `codellama`, `phi3`, `gemma2` |
+| Chat | `llama3.2:3b` | — | `llama3.1` (8B), `mistral`, `codellama`, `phi3`, `gemma2` |
 | Embeddings | `nomic-embed-text` | 768 | `mxbai-embed-large` (1024), `all-minilm` (384) |
 
 > **Important:** When changing embedding models, update `spring.ai.vectorstore.pgvector.dimensions` to match.
@@ -530,7 +541,7 @@ spring:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       chat:
         options:
-          model: ${OLLAMA_CHAT_MODEL:llama3.1}
+          model: ${OLLAMA_CHAT_MODEL:llama3.2:3b}
           temperature: 0.3
       embedding:
         options:
@@ -818,7 +829,7 @@ api_keys                     -- API key credentials
 | `spring.ai.openai.chat.options.model` | gpt-4o-mini | OpenAI chat model |
 | `spring.ai.openai.embedding.options.model` | text-embedding-3-small | OpenAI embedding model |
 | `spring.ai.ollama.base-url` | http://localhost:11434 | Ollama server URL (local mode) |
-| `spring.ai.ollama.chat.options.model` | llama3.1 | Ollama chat model |
+| `spring.ai.ollama.chat.options.model` | llama3.2:3b | Ollama chat model |
 | `spring.ai.ollama.embedding.options.model` | nomic-embed-text | Ollama embedding model |
 | `spring.ai.vectorstore.pgvector.dimensions` | 1536 (openai) / 768 (ollama) | Must match embedding model |
 | `rag.chunking.chunk-size` | 800 | Target chunk size (chars) |
@@ -872,7 +883,7 @@ api_keys                     -- API key credentials
 ./mvnw test -Dtest="*IntegrationTest"
 ```
 
-> **Note:** Java 25 + Mockito/ByteBuddy incompatibility — tests use manual stub beans (`TestAiConfig`) instead of `@MockitoBean`.
+> **Note:** The Spring AI clients (`ChatModel`, `EmbeddingModel`, `VectorStore`, `ChatClient.Builder`) require a live OpenAI/Ollama connection, so tests wire lightweight manual stub beans via `TestAiConfig` (a `@TestConfiguration`) rather than making real AI calls. Integration tests run against a real PostgreSQL 16 + pgvector container via Testcontainers, so Docker must be running.
 
 ---
 
@@ -928,7 +939,7 @@ api_keys                     -- API key credentials
 - [x] `AiProviderConfig` — `@ConditionalOnProperty` bean wiring for OpenAI ↔ Ollama
 - [x] `application-local.yml` — pre-configured local profile (Ollama models, pgvector dimensions)
 - [x] Docker Compose Ollama service (`docker compose --profile local up`)
-- [x] Auto-pull of Ollama models on first startup (llama3.1 + nomic-embed-text)
+- [x] Auto-pull of Ollama models on first startup (llama3.2:3b + nomic-embed-text)
 - [x] Health endpoint shows active AI provider and mode (cloud/local)
 - [x] Unit tests for provider switching (`AiProviderConfigTest` — 5 tests)
 - [x] All existing tests updated and passing (54 total)

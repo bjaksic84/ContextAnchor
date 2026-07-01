@@ -1,0 +1,37 @@
+# ============================================================
+# Local / Private Mode profile (Phase 4)
+#
+# Activate with:
+#   ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+#   or  SPRING_PROFILES_ACTIVE=local ./mvnw spring-boot:run
+#
+# All AI inference (chat + embeddings) runs locally via Ollama —
+# no data leaves your network. Start the local stack first:
+#   docker compose --profile local up -d
+#
+# This profile is layered on top of application.yml; only the
+# properties that differ for local mode are defined here.
+# ============================================================
+rag:
+  ai:
+    provider: ollama            # switch AiProviderConfig to the Ollama beans
+
+spring:
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_CHAT_MODEL:llama3.2:3b}
+          temperature: 0.3
+      embedding:
+        options:
+          model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+    vectorstore:
+      pgvector:
+        # nomic-embed-text produces 768-dim vectors — this MUST match the
+        # embedding model, otherwise inserts into vector_store will fail.
+        dimensions: ${PGVECTOR_DIMENSIONS:768}
+        index-type: hnsw
+        distance-type: cosine_distance
+        initialize-schema: true

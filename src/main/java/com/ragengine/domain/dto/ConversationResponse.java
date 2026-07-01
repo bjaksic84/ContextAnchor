@@ -4,6 +4,7 @@ import lombok.Builder;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Builder
@@ -20,6 +21,7 @@ public record ConversationResponse(
             UUID id,
             String role,
             String content,
+            List<Map<String, Object>> sources,
             LocalDateTime createdAt
     ) {}
 }

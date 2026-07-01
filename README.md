@@ -70,8 +70,8 @@ An enterprise-grade **Retrieval-Augmented Generation (RAG)** platform built with
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/bojanjaksic/enterprise-rag-platform.git
-cd enterprise-rag-platform
+git clone https://github.com/bjaksic84/context-anchor.git
+cd context-anchor
 
 # 2. Start the infrastructure (Postgres + pgvector + Ollama)
 docker compose --profile local up -d
@@ -270,7 +270,3 @@ Navigate to **http://localhost:8080/swagger-ui.html** for the interactive API do
 - [x] **Phase 3** — Rate limiting, audit logging, API keys, observability, 48 tests ✅
 - [x] **Phase 4** — Ollama integration, local/private mode, profile-based switching, 54 tests ✅
 - [x] **Phase 5** — React UI (Vite + Tailwind), full platform coverage ✅
-
-## License
-
-MIT

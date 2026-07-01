@@ -80,6 +80,11 @@ public class TestAiConfig {
             public float[] embed(String text) {
                 return new float[768];
             }
+
+            @Override
+            public float[] embed(Document document) {
+                return new float[768];
+            }
         };
     }
 
